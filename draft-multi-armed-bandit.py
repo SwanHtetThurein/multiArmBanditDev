@@ -105,6 +105,8 @@ def main():
 
             posterior_beta_values = posterior_normalization(arm_chosen, normed_beta_values, Bandit[1], i, total_rounds)
 
+
+            print(f"Posterior beta values for bandit {j}: {posterior_beta_values}")
             arm_chosen = np.random.choice(list(Bandit[0].keys()), p=posterior_beta_values)
             arm_chosens[j]=arm_chosen
 

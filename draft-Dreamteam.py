@@ -89,9 +89,9 @@ def posterior_normalization(current_arm, nbv, bandit_type, current_round, total_
     return pbv
 
 
-def global_contraint(pre_global_post_nbv, current_round, total_rounds, m=3, d=5):
+def global_contraint(pre_global_post_nbv, current_round, total_rounds, m=2, d=5):
 
-    post_global_post_nbv = pre_global_post_nbv[::]
+    post_global_post_nbv = pre_global_post_nbv.copy()
 
     y = m * (1 - ( (current_round - (total_rounds/2)) / (total_rounds/2) ) **2)
 
@@ -112,14 +112,16 @@ def global_contraint(pre_global_post_nbv, current_round, total_rounds, m=3, d=5)
     if excess <= 0:
         return pre_global_post_nbv
     
-    for zd,i,ind in zip(zd_list,pre_global_post_nbv,range(len(pre_global_post_nbv))):
+    for zd,bandit,ind in zip(zd_list,pre_global_post_nbv,range(len(pre_global_post_nbv))):
         
-        delta2 = 1 - excess/(zd * d)
+        delta2 =   max(0, 1 - (excess/(zd * d)))
         print(f"Delta2 value for bandit {ind}: {delta2}")
-        curr_arm = i[0]
+
+        
+        curr_arm = bandit[0]
 
         s_p = 0
-        for j in enumerate(i[1]):
+        for j in enumerate(bandit[1]):
 
             if j[0] != curr_arm:
                 s_p += post_global_post_nbv[ind][1][j[0]] * (1 - delta2)
@@ -156,6 +158,7 @@ def main():
             normed_beta_values = normalize_beta_values(beta_values)
 
             posterior_beta_values = posterior_normalization(arm_chosen, normed_beta_values, Bandit[1], i+1, total_rounds)
+            print(f"Posterior beta values for bandit {j}: {posterior_beta_values}")
 
             pre_global_post_nbv[j][0] = arm_chosen
             pre_global_post_nbv[j][1] = posterior_beta_values
@@ -167,7 +170,7 @@ def main():
                 continue
             
         #Integrating Global constraints from second round onwards
-        if i != 0:
+        if i >= 1:
             
             post_global_post_nbv = global_contraint(pre_global_post_nbv, i+1, total_rounds)
 
