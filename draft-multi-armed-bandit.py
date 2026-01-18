@@ -9,9 +9,6 @@ Heirarchy = {
 }
 
 
-
-
-
 Interaction_patterns = {
     0:[[1,1],'Emergent'],
     1:[[1,1],'Round-robin'],
@@ -41,22 +38,7 @@ Feedback_norms = {
 }
 
 
-
-
-
-
-
 Bandits = [[Heirarchy,'early'], [Interaction_patterns,'ongoing'], [Norms_of_Engagement,'late'], [Decision_making_norms,'late'], [Feedback_norms,'ongoing']]
-
-# centralized = [1,1]
-
-# decentralized = [1,1]
-
-# no_heirarchy = [1,1]
-
-
-
-
 
 
 def reward_generator():
