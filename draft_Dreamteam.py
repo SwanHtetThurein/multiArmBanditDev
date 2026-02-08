@@ -2,10 +2,10 @@ import numpy as np
 import random
 import math
 
-Heirarchy = {
+Hierarchy = {
     0:[[1,1],'Centralized'],
     1:[[1,1],'Decentralized'],
-    2:[[1,1],'No-heirarchy']
+    2:[[1,1],'No-Hierarchy']
 }
 
 
@@ -38,16 +38,44 @@ Feedback_norms = {
 }
 
 
-Bandits = [[Heirarchy,'early'], [Interaction_patterns,'ongoing'], [Norms_of_Engagement,'late'], [Decision_making_norms,'late'], [Feedback_norms,'ongoing']]
+Bandits = [[Hierarchy,'early'], [Interaction_patterns,'ongoing'], [Norms_of_Engagement,'late'], [Decision_making_norms,'late'], [Feedback_norms,'ongoing']]
 
 pre_global_post_nbv = [[None,[None,None,None]],[None,[None,None,None]],[None,[None,None,None]],[None,[None,None,None,None,None]],[None,[None,None,None]]]
 
 
-def reward_generator():
-    t = random.random()
-    if t>0.5:
-        return 1
-    return 0
+
+
+
+
+
+def reward_generator(current_arms=[None], optimal_arms=[None]):
+
+    # team_score = random.random()
+    # success_threshold = 0.6
+    # if current_arms and optimal_arms:
+    #     for c_arm, o_arm in zip(current_arms, optimal_arms):
+    #         if c_arm == o_arm:
+    #             team_score += 0.1
+
+    # if team_score > success_threshold:
+    #     return 1
+    # return 0
+
+
+
+    if not current_arms or not optimal_arms:
+        return 0
+
+    match_count = sum(1 for c_arm, o_arm in zip(current_arms, optimal_arms) if c_arm == o_arm)
+    max_matches = min(len(current_arms), len(optimal_arms))
+
+    base_success = 0.0
+    per_match_gain = 0.7 / max_matches
+    success_prob = base_success + (match_count * per_match_gain)
+
+    success_prob = max(0.0, min(0.95, success_prob))
+
+    return 1 if random.random() < success_prob else 0
 #replace with actual reward generator logic or better logic to test different bandit strategies
 
 #pick random sample value from beta distribution 
@@ -92,7 +120,7 @@ def global_contraint(pre_global_post_nbv, current_round, total_rounds, m=3, d=5)
     post_global_post_nbv = pre_global_post_nbv.copy()
 
     y = m * (1 - ( (current_round - (total_rounds/2)) / (total_rounds/2) ) **2)
-    print(f"Y value: {y} \n")
+    #print(f"Y value: {y} \n")
 
     z = 0
     zd_list = []
@@ -102,18 +130,18 @@ def global_contraint(pre_global_post_nbv, current_round, total_rounds, m=3, d=5)
         a -= bandit[1][bandit[0]]
         zd_list.append(a)
 
-    print("zd_list: ", zd_list)
+    #print("zd_list: ", zd_list)
     z = sum(zd_list)
-    print(f"Z value: {z}")
+    #print(f"Z value: {z}")
     excess = z-y
-    print
+    #print
     if excess <= 0:
         return pre_global_post_nbv
     
     for zd,bandit,ind in zip(zd_list,pre_global_post_nbv,range(len(pre_global_post_nbv))):
         
         delta2 =   max(0, 1 - (excess/(zd * d)))
-        print(f"Delta2 value for bandit {ind}: {delta2}\n")
+        #print(f"Delta2 value for bandit {ind}: {delta2}\n")
 
         curr_arm = bandit[0]
 
@@ -130,14 +158,18 @@ def global_contraint(pre_global_post_nbv, current_round, total_rounds, m=3, d=5)
     return post_global_post_nbv
 
 
-def main():
+def DreamTeam(biased_arms, optimal_arms,total_rounds=70):
 
-    total_rounds = int(input("Enter number of rounds to simulate: "))
-    arms_chosens = [None,None,None,None,None]
+    #total_rounds = int(input("Enter number of rounds to simulate: "))
+    
+    arms_chosens = biased_arms
     for i in range(total_rounds):
         print(f"Round {i+1} \n\n")
 
         for j,Bandit in enumerate(Bandits):
+
+            if i == 0:
+                break
             arm_chosen = arms_chosens[j]
             
             #Bandit[0].values gives the arms of the bandit
@@ -151,17 +183,17 @@ def main():
 
 
             #select arm based on posterior probabilities for first round
-            if i == 0:
-                arm_chosen = int(np.random.choice(list(Bandit[0].keys()), p=posterior_beta_values))
-                arms_chosens[j]=arm_chosen
-                continue
-        print("Pre-global posterior nbv: ",pre_global_post_nbv,"\n")
+            # if i == 0:
+            #     arm_chosen = int(np.random.choice(list(Bandit[0].keys()), p=posterior_beta_values))
+            #     arms_chosens[j]=arm_chosen
+            #     continue
+        #print("Pre-global posterior nbv: ",pre_global_post_nbv,"\n")
 
         #Integrating Global constraints from second round onwards
         if i >= 1:
             
             post_global_post_nbv = global_contraint(pre_global_post_nbv, i+1, total_rounds)
-            print("Post-global posterior nbv: ",post_global_post_nbv,"\n")
+            #print("Post-global posterior nbv: ",post_global_post_nbv,"\n")
 
             for arm_ind,Bandit in zip(range(len(arms_chosens)),Bandits):
                 
@@ -174,7 +206,7 @@ def main():
 
 
         #if the combination of arms chosen results in success or failure
-        sucess = reward_generator()
+        sucess = reward_generator(arms_chosens, optimal_arms)
 
         if sucess:
             print("Success\n")
@@ -188,10 +220,12 @@ def main():
                 #update the beta distribution parameters for the chosen arms
                 Bandit[0][arm][0][1] += 1
         
-    print(Heirarchy)
+    print(Hierarchy)
     print(Interaction_patterns)
     print(Norms_of_Engagement)
     print(Decision_making_norms)
     print(Feedback_norms)
+    print("Final arms chosen: ", arms_chosens)
 
-main()
+if __name__ == "__main__":
+    DreamTeam()
