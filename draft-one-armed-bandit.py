@@ -35,10 +35,10 @@ class one_armed_bandit():
 
 
     def reward_generator(self,curr_arm, optimal_arm):
-        base = 0.001
+        base = 0.3
         
         if curr_arm == optimal_arm:
-            base += 0.998
+            base += 0.6
         
         return 1 if random.random() < base else 0
 
@@ -62,10 +62,10 @@ class one_armed_bandit():
         pbv=nbv[::]
         if bandit_type == 'early':
             # Early rounds: explore more (lower delta = less concentration)
-            delta = 1/(1+math.e**(current_round-total_rounds/2))
+            delta = 1/(1+math.e**(current_round- (total_rounds/2) ))
         elif bandit_type == 'late':
             # Late rounds: exploit more (higher delta = more concentration)
-            delta = 1/(1+math.e**(total_rounds/2-current_round))
+            delta = 1/(1+math.e**( (total_rounds/2) - current_round))
         else:
             delta = 1
 
@@ -76,7 +76,7 @@ class one_armed_bandit():
         for i in range(len(pbv)):
             if i != current_arm:
                 accumulator += pbv[i]*(1-delta)
-                pbv[i] = pbv[i]*(delta)
+                pbv[i] = pbv[i] * delta
         
         pbv[current_arm] +=  accumulator
 
@@ -155,11 +155,9 @@ class one_armed_bandit():
 
         max_arm_index = np.argmax(beta_values)
 
-        return 1 if arm_chosen == max_arm_index else 0
-
-
-
-
+        #return 1 if arm_chosen == max_arm_index else 0
+        return 1 if max_arm_index == self.optimal_arm else 0
+        
 
     # Get a single random value
     #random_value_numpy = np.random.beta(a, b)
