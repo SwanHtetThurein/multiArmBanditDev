@@ -18,8 +18,6 @@ import math
 
 class one_armed_bandit():
 
-
-
     def __init__(self, initial_bias, optimal_arm, trounds):
         
         self.Heirarchy = {

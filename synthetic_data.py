@@ -1,5 +1,5 @@
 import draft_Dreamteam as dt
-
+import numpy as np
 
 
 
@@ -15,11 +15,11 @@ synthetic_teams = [
         },
         {
             #optimal dimensions
-            'Hierarchy' : 2,
+            'Hierarchy' : 1,
             'Interaction_patterns' : 0,
             'Norms_of_Engagement' : 1,
             'Decision_making_norms' : 0,
-            'Feedback_norms' : 2
+            'Feedback_norms' : 1
         }
     ],
     [
@@ -109,8 +109,15 @@ def main():
         print(f"Biased arms: {biased_arms}")
         print(f"Optimal arms: {optimal_arms}")
 
+        a = []
+        for i in dt.DreamTeam().DreamTeam(biased_arms, optimal_arms):
+            a.append(int(np.argmax(i[1])))
 
-        dt.DreamTeam(biased_arms, optimal_arms)
+        print(f"Arms chosen by the algorithm: {a}")
+ 
+        
+
+
 
 
 main()
