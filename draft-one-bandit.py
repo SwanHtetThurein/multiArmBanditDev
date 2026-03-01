@@ -16,7 +16,7 @@ import math
 
 
 
-class one_armed_bandit():
+class one_bandit():
 
     def __init__(self, initial_bias, optimal_arm, trounds):
         
@@ -197,7 +197,7 @@ for j in [10,15,20,50,100]:
 
     for i in tests*20:
         print(f"Initial bias: {i[0]}, Optimal arm: {i[1]}")
-        bandit = one_armed_bandit(i[0], i[1], j)
+        bandit = one_bandit(i[0], i[1], j)
         result = bandit.main()
         if result == 1:
             success_count += 1
