@@ -32,7 +32,15 @@ class two_bandit():
             4:[[1,1],'Rapid']
         }
 
-        self.dict_list = [self.Heirarchy, self.Interaction_patterns, self.Norms_of_Engagement, self.Decision_making_norms]
+        self.Feedback_norms = {
+            0:[[1,1],'None'],
+            1:[[1,1],'Encouraging'],
+            2:[[1,1],'Critical'],
+        }
+
+
+
+        self.dict_list = [self.Heirarchy, self.Interaction_patterns, self.Norms_of_Engagement, self.Decision_making_norms, self.Feedback_norms]
         self.initial_bias = initial_bias
         self.optimal_arm = optimal_arm
         self.total_rounds = trounds
@@ -108,17 +116,20 @@ class two_bandit():
             Interaction_beta_values = [self.generate_beta_value(self.Interaction_patterns[j][0]) for j in range(3)]
             Norms_of_Engagement_beta_values = [self.generate_beta_value(self.Norms_of_Engagement[j][0]) for j in range(3)]
             Decision_making_norms_beta_values = [self.generate_beta_value(self.Decision_making_norms[j][0]) for j in range(5)]
+            Feedback_norms_beta_values = [self.generate_beta_value(self.Feedback_norms[j][0]) for j in range(3)]
 
 
             Hierarchy_normed_beta_values = self.normalize_beta_values(Hierarchy_beta_values)
             Interaction_normed_beta_values = self.normalize_beta_values(Interaction_beta_values)
             Norms_of_Engagement_normed_beta_values = self.normalize_beta_values(Norms_of_Engagement_beta_values)
             Decision_making_norms_normed_beta_values = self.normalize_beta_values(Decision_making_norms_beta_values)
+            Feedback_norms_normed_beta_values = self.normalize_beta_values(Feedback_norms_beta_values)
             
             Hierarchy_posterior_beta_values = self.posterior_normalization(arms_chosen[0], Hierarchy_normed_beta_values, 'early', i+1, total_rounds)
             Interaction_posterior_beta_values = self.posterior_normalization(arms_chosen[1], Interaction_normed_beta_values, 'ongoing', i+1, total_rounds)
             Norms_of_Engagement_posterior_beta_values = self.posterior_normalization(arms_chosen[2], Norms_of_Engagement_normed_beta_values, 'late', i+1, total_rounds)
             Decision_making_norms_posterior_beta_values = self.posterior_normalization(arms_chosen[3], Decision_making_norms_normed_beta_values, 'late', i+1, total_rounds)
+            Feedback_norms_posterior_beta_values = self.posterior_normalization(arms_chosen[4], Feedback_norms_normed_beta_values, 'late', i+1, total_rounds)
 
             if i == 0:
                 print("First round, choosing arms based on initial bias")
@@ -128,6 +139,9 @@ class two_bandit():
                 arms_chosen[1] = np.random.choice([0, 1, 2], p=Interaction_posterior_beta_values)
                 arms_chosen[2] = np.random.choice([0, 1, 2], p=Norms_of_Engagement_posterior_beta_values)
                 arms_chosen[3] = np.random.choice([0, 1, 2, 3, 4], p=Decision_making_norms_posterior_beta_values)
+                arms_chosen[4] = np.random.choice([0, 1, 2], p=Feedback_norms_posterior_beta_values)
+            
+            
             print(f"Centralized: {self.Heirarchy[0][0]}, Decentralized: {self.Heirarchy[1][0]}, No Heirarchy: {self.Heirarchy[2][0]}\n")
             print(f"Posterior Beta values - Centralized: {Hierarchy_posterior_beta_values[0]}, Decentralized: {Hierarchy_posterior_beta_values[1]}, No Heirarchy: {Hierarchy_posterior_beta_values[2]}\n\n")
 
@@ -140,9 +154,12 @@ class two_bandit():
             print(f"None: {self.Decision_making_norms[0][0]}, Divergent: {self.Decision_making_norms[1][0]}, Convergent: {self.Decision_making_norms[2][0]}, Informed: {self.Decision_making_norms[3][0]}, Rapid: {self.Decision_making_norms[4][0]}\n")
             print(f"Posterior Beta values - None: {Decision_making_norms_posterior_beta_values[0]}, Divergent: {Decision_making_norms_posterior_beta_values[1]}, Convergent: {Decision_making_norms_posterior_beta_values[2]}, Informed: {Decision_making_norms_posterior_beta_values[3]}, Rapid: {Decision_making_norms_posterior_beta_values[4]}\n")
 
+            print(f"None: {self.Feedback_norms[0][0]}, Encouraging: {self.Feedback_norms[1][0]}, Critical: {self.Feedback_norms[2][0]}\n")
+            print(f"Posterior Beta values - None: {Feedback_norms_posterior_beta_values[0]}, Encouraging: {Feedback_norms_posterior_beta_values[1]}, Critical: {Feedback_norms_posterior_beta_values[2]}\n")
+
 
             print("Arms chosen for this round:")
-            print(f"Chosen arms: {self.Heirarchy[arms_chosen[0]][1]}, {self.Interaction_patterns[arms_chosen[1]][1]}, {self.Norms_of_Engagement[arms_chosen[2]][1]}, {self.Decision_making_norms[arms_chosen[3]][1]}\n")
+            print(f"Chosen arms: {self.Heirarchy[arms_chosen[0]][1]}, {self.Interaction_patterns[arms_chosen[1]][1]}, {self.Norms_of_Engagement[arms_chosen[2]][1]}, {self.Decision_making_norms[arms_chosen[3]][1]}, {self.Feedback_norms[arms_chosen[4]][1]}\n")
 
             success = self.reward_generator(arms_chosen, self.optimal_arm)
             if success:
@@ -151,12 +168,14 @@ class two_bandit():
                 self.Interaction_patterns[arms_chosen[1]][0][0] += 1
                 self.Norms_of_Engagement[arms_chosen[2]][0][0] += 1
                 self.Decision_making_norms[arms_chosen[3]][0][0] += 1
+                self.Feedback_norms[arms_chosen[4]][0][0] += 1
             else:
                 print("Failed")
                 self.Heirarchy[arms_chosen[0]][0][1] += 1
                 self.Interaction_patterns[arms_chosen[1]][0][1] += 1
                 self.Norms_of_Engagement[arms_chosen[2]][0][1] += 1
                 self.Decision_making_norms[arms_chosen[3]][0][1] += 1
+                self.Feedback_norms[arms_chosen[4]][0][1] += 1
                 
         Hierarchy_beta_values = [
             self.generate_beta_value(self.Heirarchy[0][0]),
@@ -186,17 +205,24 @@ class two_bandit():
             self.generate_beta_value(self.Decision_making_norms[4][0])
         ]
 
+        Feedback_norms_beta_values = [
+            self.generate_beta_value(self.Feedback_norms[0][0]),
+            self.generate_beta_value(self.Feedback_norms[1][0]),
+            self.generate_beta_value(self.Feedback_norms[2][0])
+        ]
+
         print(f"Final updated Hierarchy beta values: Centralized: {Hierarchy_beta_values[0]}, Decentralized: {Hierarchy_beta_values[1]}, No Heirarchy: {Hierarchy_beta_values[2]}")
         print(f"Final updated Interaction beta values: Emergent: {Interaction_beta_values[0]}, Round-robin: {Interaction_beta_values[1]}, Equally-distributed: {Interaction_beta_values[2]}")
         print(f"Final updated Norms of Engagement beta values: None: {Norms_of_Engagement_beta_values[0]}, Professional: {Norms_of_Engagement_beta_values[1]}, Informal: {Norms_of_Engagement_beta_values[2]}")
         print(f"Final updated Decision Making Norms beta values: None: {Decision_making_norms_beta_values[0]}, Divergent: {Decision_making_norms_beta_values[1]}, Convergent: {Decision_making_norms_beta_values[2]}, Informed: {Decision_making_norms_beta_values[3]}, Rapid: {Decision_making_norms_beta_values[4]}")
-
+        print(f"Final updated Feedback Norms beta values: None: {Feedback_norms_beta_values[0]}, Encouraging: {Feedback_norms_beta_values[1]}, Critical: {Feedback_norms_beta_values[2]}")
 
         Hierarchy_max_arm_index = np.argmax(Hierarchy_beta_values)
         Interaction_max_arm_index = np.argmax(Interaction_beta_values)
         Norms_of_Engagement_max_arm_index = np.argmax(Norms_of_Engagement_beta_values)
         Decision_making_norms_max_arm_index = np.argmax(Decision_making_norms_beta_values)
-
+        Feedback_norms_max_arm_index = np.argmax(Feedback_norms_beta_values)
+        
         count = 0
         if Hierarchy_max_arm_index == self.optimal_arm[0]:
             count += 1
@@ -206,22 +232,24 @@ class two_bandit():
             count += 1
         if Decision_making_norms_max_arm_index == self.optimal_arm[3]:
             count += 1
+        if Feedback_norms_max_arm_index == self.optimal_arm[4]:
+            count += 1
         
         #Partial success dertmined by how many arms were correctly identified
         #if 1 or 2 out of 3 is correct, it's a partial success. If all 3 are correct, it's a full success. If none are correct, it's a failure.
         
-        return 1 if count == 4 else 0.5 if (count == 3 or count == 2 or count ==1) else 0
+        return 1 if count == 5 else 0.5 if (count == 4 or count == 3 or count ==2 or count ==1) else 0
         
 tests = [
-    [[0,0,0,0],[0,0,0,0]],
-    [[0,0,1,1],[0,1,1,1]],
-    [[0,1,2,2],[1,2,2,2]],
-    [[1,2,2,2],[2,2,2,2]],
-    [[1,2,1,1],[2,1,1,1]],
-    [[0,1,0,0],[1,0,0,0]],
-    [[0,0,0,0],[2,2,2,2]],
-    [[1,1,1,1],[1,1,1,1]],
-    [[2,2,2,2],[0,0,0,0]],
+    [[0,0,0,0,0],[0,0,0,0,0]],
+    [[0,0,1,1,1],[0,1,1,1,1]],
+    [[0,1,2,2,2],[1,2,2,2,2]],
+    [[1,2,2,2,2],[2,2,2,2,2]],
+    [[1,2,1,1,1],[2,1,1,1,1]],
+    [[0,1,0,0,0],[1,0,0,0,0]],
+    [[0,0,0,0,0],[2,2,2,2,2]],
+    [[1,1,1,1,1],[1,1,1,1,1]],
+    [[2,2,2,2,2],[0,0,0,0,0]],
 ]
 
 
