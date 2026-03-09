@@ -33,10 +33,10 @@ class one_bandit():
 
 
     def reward_generator(self,curr_arm, optimal_arm):
-        base = 0.3
+        base = 0.00
         
         if curr_arm == optimal_arm:
-            base += 0.6
+            base += 1
         
         return 1 if random.random() < base else 0
 

@@ -3,7 +3,7 @@ import random
 import math
 
 
-class two_bandit():
+class five_bandit():
     def __init__(self, initial_bias, optimal_arm, trounds):
         
         self.Heirarchy = {
@@ -52,15 +52,15 @@ class two_bandit():
         """
         # start with certainty and subtract noise,
         # then add penalties/bonuses for mismatches/matches
-        p = 0.8 
+        p = 1 
         for chosen, opt in zip(curr_arms, optimal_arms):
             if chosen != opt:
-                p -= noise          # penalise an incorrect choice
-            else:
-                p += noise * 0.2    # small bonus for correct arm
+                p -= 1/(len(curr_arms))     # penalise an incorrect choice
+            # else:
+            #     p += noise * 0.2    # small bonus for correct arm
 
-        p = max(0.0, min(1.0, p))   # clamp to [0,1]
-        return 1 if random.random() < p else 0
+        # p = max(0.0, min(1.0, p))   # clamp to [0,1]
+        return p
 
     def generate_beta_value(self, arm):
         random_beta_value = np.random.beta(arm[0], arm[1])
@@ -162,21 +162,24 @@ class two_bandit():
             print(f"Chosen arms: {self.Heirarchy[arms_chosen[0]][1]}, {self.Interaction_patterns[arms_chosen[1]][1]}, {self.Norms_of_Engagement[arms_chosen[2]][1]}, {self.Decision_making_norms[arms_chosen[3]][1]}, {self.Feedback_norms[arms_chosen[4]][1]}\n")
 
             success = self.reward_generator(arms_chosen, self.optimal_arm)
-            if success:
+            print(f"Success: {success}")
+            if success > 0.1:
                 print("Success")
-                self.Heirarchy[arms_chosen[0]][0][0] += 1
-                self.Interaction_patterns[arms_chosen[1]][0][0] += 1
-                self.Norms_of_Engagement[arms_chosen[2]][0][0] += 1
-                self.Decision_making_norms[arms_chosen[3]][0][0] += 1
-                self.Feedback_norms[arms_chosen[4]][0][0] += 1
+                self.Heirarchy[arms_chosen[0]][0][0] += success
+                self.Interaction_patterns[arms_chosen[1]][0][0] += success
+                self.Norms_of_Engagement[arms_chosen[2]][0][0] += success
+                self.Decision_making_norms[arms_chosen[3]][0][0] += success
+                self.Feedback_norms[arms_chosen[4]][0][0] += success
+
+            #Beta Distribution = B (alpha, beta) where alpha = number of successes + 1 and beta = number of failures + 1. So we add 1 to both success and failure counts to avoid issues with zero counts.
             else:
                 print("Failed")
-                self.Heirarchy[arms_chosen[0]][0][1] += 1
-                self.Interaction_patterns[arms_chosen[1]][0][1] += 1
-                self.Norms_of_Engagement[arms_chosen[2]][0][1] += 1
-                self.Decision_making_norms[arms_chosen[3]][0][1] += 1
-                self.Feedback_norms[arms_chosen[4]][0][1] += 1
-                
+                self.Heirarchy[arms_chosen[0]][0][1] += 1000
+                self.Interaction_patterns[arms_chosen[1]][0][1] += 1000
+                self.Norms_of_Engagement[arms_chosen[2]][0][1] += 1000
+                self.Decision_making_norms[arms_chosen[3]][0][1] += 1000
+                self.Feedback_norms[arms_chosen[4]][0][1] += 1000
+
         Hierarchy_beta_values = [
             self.generate_beta_value(self.Heirarchy[0][0]),
             self.generate_beta_value(self.Heirarchy[1][0]),
@@ -238,18 +241,19 @@ class two_bandit():
         #Partial success dertmined by how many arms were correctly identified
         #if 1 or 2 out of 3 is correct, it's a partial success. If all 3 are correct, it's a full success. If none are correct, it's a failure.
         
-        return 1 if count == 5 else 0.5 if (count == 4 or count == 3 or count ==2 or count ==1) else 0
-        
+        #return 1 if count == 5 else 0.5 if (count == 4 or count == 3 or count ==2 or count ==1) else 0
+        return count
+    
 tests = [
-    [[0,0,0,0,0],[0,0,0,0,0]],
-    [[0,0,1,1,1],[0,1,1,1,1]],
-    [[0,1,2,2,2],[1,2,2,2,2]],
-    [[1,2,2,2,2],[2,2,2,2,2]],
-    [[1,2,1,1,1],[2,1,1,1,1]],
-    [[0,1,0,0,0],[1,0,0,0,0]],
-    [[0,0,0,0,0],[2,2,2,2,2]],
-    [[1,1,1,1,1],[1,1,1,1,1]],
-    [[2,2,2,2,2],[0,0,0,0,0]],
+    # [[0,0,0,0,0],[0,0,0,0,0]],
+    # [[0,0,1,1,1],[0,1,1,1,1]],
+    # [[0,1,2,2,2],[1,2,2,2,2]],
+    # [[1,2,2,2,2],[2,2,2,2,2]],
+    # [[1,2,1,1,1],[2,1,1,1,1]],
+    # [[0,1,0,0,0],[1,0,0,0,0]],
+    # [[0,0,0,0,0],[2,2,2,2,2]],
+    # [[1,1,1,1,1],[1,1,1,1,1]],
+    [[2,2,2,2,2],[0,0,0,0,0]]
 ]
 
 
@@ -259,30 +263,42 @@ d={
     20:[0,0,0]
 }
 
-for j in [10,15,20,50,100]:
+for j in [10]:
     success_count = 0
     partial_success_count = 0
     failure_count = 0
 
+    score = {
+        0:0,
+        1:0,
+        2:0,
+        3:0,
+        4:0,
+        5:0
 
-    for i in tests*20:
+    }
+
+
+    for i in tests:#tests*20:
         print(f"Initial bias: {i[0]}, Optimal arm: {i[1]}")
-        bandit = two_bandit(i[0], i[1], j)
+        bandit = five_bandit(i[0], i[1], j)
         result = bandit.main()
-        if result == 1:
-            success_count += 1
-        elif result == 0.5:
-            partial_success_count += 1
-        else:
-            failure_count += 1
+        # if result == 1:
+        #     success_count += 1
+        # elif result == 0.5:
+        #     partial_success_count += 1
+        # else:
+        #     failure_count += 1
+        score[result] +=1
 
 
-    d[j] = [success_count, failure_count, partial_success_count]
+    d[j] = f"Successes: {score[5]}, Failures: {score[0]}, Partial Successes: 1 - {score[1]}, 2 - {score[2]}, 3 - {score[3]}, 4 - {score[4]}"
+
 
 
 
 for key, value in d.items():
-    print(f"Total rounds: {key}, Successes: {value[0]}, Failures: {value[1]}, Partial Successes: {value[2]}")
+    print(f"Total rounds: {key}, {value}")
 
 
 
