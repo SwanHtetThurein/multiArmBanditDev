@@ -120,7 +120,7 @@ class DreamTeam():
         return pbv
 
 
-    def global_contraint(self,pre_global_post_nbv, current_round, total_rounds, m=3, d=5):
+    def global_contraint(self,pre_global_post_nbv, current_round, total_rounds, m=2, d=5):
 
         post_global_post_nbv = pre_global_post_nbv.copy()
 
