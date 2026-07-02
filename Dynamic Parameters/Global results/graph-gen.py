@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 #global_results_rounds10_dims3_tests9_20260614_224636.csv
 #global_results_rounds50_dims3_tests9_20260614_224728.csv
 
-file_name = 'global_results_rounds100_dims9_tests9_20260607_231226.csv'
+file_name = 'global_results_rounds50_dims9_tests9_20260622_000118.csv'
 csv_path = Path(__file__).resolve().with_name(file_name)
 df = pd.read_csv(csv_path)
 
