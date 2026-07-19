@@ -3,8 +3,6 @@ import random
 import math
 
 
-
-
 class DreamTeam():
     
     def __init__(self):
