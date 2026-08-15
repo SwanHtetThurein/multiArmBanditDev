@@ -21,8 +21,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
-from algorithms import get_algorithm, ProblemConfig
-from environment import TeamRewardEnvironment
+from bandits_unconstrained.bandit_framework_NeuralLinear.algorithms import get_algorithm, ProblemConfig
+from bandits_unconstrained.bandit_framework_NeuralLinear.environment import TeamRewardEnvironment
 
 
 DEFAULT_NOISE_LEVELS = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
