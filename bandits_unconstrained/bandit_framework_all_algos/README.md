@@ -26,7 +26,17 @@ bandit_framework/
     ├── gp_onehot.py              # textbook GP-EI on one-hot ("naive GP" ablation)
     ├── neural_linear.py          # Bayesian linear posterior on an MLP's last layer
     ├── bootstrapped_nn.py        # bootstrap ensemble of MLPs
-    └── lin_ucb.py                # bocs surrogate w/ UCB instead of Thompson sampling
+    ├── lin_ucb.py                # bocs surrogate w/ UCB instead of Thompson sampling
+    ├── knowledge_gradient.py     # bocs surrogate w/ the Knowledge Gradient
+    ├── pure_exploration.py       # bocs surrogate w/ no acquisition at all
+    ├── satisficing_ts.py         # bocs surrogate w/ satisficing Thompson sampling
+    ├── gp_acquisitions.py        # noisy-EI / IGP-UCB / GP-TS on the one-hot GP
+    ├── casmopolitan.py           # trust-region categorical BO
+    ├── glm_fpl.py                # logistic GLM explored by perturbing rewards
+    ├── bayes_gap.py              # fixed-budget best-arm identification
+    ├── cucb.py                   # combinatorial UCB
+    ├── combinatorial_ts.py       # combinatorial Thompson sampling
+    └── dreamteam_original.py     # DreamTeam exactly as published (CHI 2018)
 ```
 
 ## Available algorithms
@@ -56,14 +66,23 @@ Select with `--algorithm <name>`; the name is also the CSV filename prefix.
 | `bayesgap` | best-arm ID | gap-based allocation aimed at the final recommendation |
 | `cucb` | combinatorial bandit | optimistic per-base-arm estimates, exact separable oracle |
 | `cts` | combinatorial bandit | Thompson sampling per base arm, exact separable oracle |
+| `casmopolitan` | surrogate BO | trust-region BO: a Hamming ball that grows, shrinks and restarts |
+| `glm_fpl` | GLM | logistic-link GLM explored by perturbing the observed rewards |
+| `sts` | acquisition | the `bocs` surrogate with satisficing Thompson sampling |
+| `gp_nei` | acquisition | the `gp_onehot` surrogate with Noisy Expected Improvement |
+| `gp_ucb` | acquisition | the `gp_onehot` surrogate with IGP-UCB |
+| `gp_ts` | acquisition | the `gp_onehot` surrogate with GP Thompson sampling |
 
 ### Two comparisons the registry is built around
 
-**Acquisition rules on one fixed surrogate.** `bocs`, `linucb`, `kg` and `purexp` all use the
-identical second-order Bayesian linear model with identical priors and the identical local-search
-optimizer. They differ *only* in how they pick the next team -- Thompson sampling, upper
-confidence bound, knowledge gradient, and nothing at all. Differences between them are
-attributable to the acquisition rule and to nothing else.
+**Acquisition rules on one fixed surrogate -- twice over.** `bocs`, `linucb`, `kg`, `purexp` and
+`sts` all use the identical second-order Bayesian linear model with identical priors and the
+identical local-search optimizer, differing *only* in how they pick the next team: Thompson
+sampling, upper confidence bound, knowledge gradient, nothing at all, and satisficing Thompson
+sampling. Separately, `gp_onehot`, `gp_nei`, `gp_ucb` and `gp_ts` do the same on a Gaussian
+process -- EI, noisy EI, IGP-UCB and GP Thompson sampling on one shared kernel and fit. Running
+the acquisition comparison on two different surrogates separates "this rule is better" from
+"this rule happens to suit a linear model".
 
 **Faithful-vs-simplified surrogates.** `bocs_hs` and `combo_slice` implement the inference their
 papers actually specify (horseshoe prior via the Makalic-Schmidt Gibbs sampler; hyperparameter

@@ -1,3 +1,12 @@
+> **Note — this copy lives in the non-stationary folder.**
+> The per-algorithm descriptions below are exact, and the algorithm files here
+> are byte-identical to the stationary folder's. But **Part 1 (the experiment)
+> describes the stationary setup**: 100 rounds with a hidden optimum that never
+> moves. In this folder the run is 300 rounds and the optimum is swapped after
+> rounds 101 and 201. See `../README.md` in this folder for the non-stationary
+> design, and read Part 1 below as background on the shared problem, the
+> environment and the algorithm contract — all of which still apply.
+
 # The Algorithm Suite
 
 A guide to the benchmark: what the experiment is, why each algorithm is in it,
