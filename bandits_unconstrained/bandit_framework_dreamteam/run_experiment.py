@@ -13,6 +13,12 @@ registry of available names and how to add new ones.
 """
 
 import argparse
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from bandits_unconstrained.bandit_framework_dreamteam.algorithms import ALGORITHMS
 from bandits_unconstrained.bandit_framework_dreamteam.experiment import ExperimentSettings, run_experiment, save_results

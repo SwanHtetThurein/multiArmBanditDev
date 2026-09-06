@@ -36,7 +36,7 @@ run_one() {
   echo "============================================================"
   echo "Running $algo (seed=$seed)"
   echo "============================================================"
-  python3 run_perturbation_experiment.py \
+  python run_perturbation_experiment.py \
     --algorithm "$algo" \
     --bandits 9 \
     --rounds 300 \
@@ -57,12 +57,12 @@ done
 
 echo ""
 echo "Sweep complete. Aggregating..."
-python3 aggregate_perturbation.py --results_dir "$OUTPUT_DIR" --p_perturb_dims 1
+python aggregate_perturbation.py --results_dir "$OUTPUT_DIR" --p_perturb_dims 1
 
 echo ""
 echo "Generating graphs..."
 mkdir -p Graphs
-python3 graph_perturbation.py --results_dir "$OUTPUT_DIR" --output_dir Graphs \
+python graph_perturbation.py --results_dir "$OUTPUT_DIR" --output_dir Graphs \
     --n_bandits 9 --p_perturb_dims 1
 
 echo ""

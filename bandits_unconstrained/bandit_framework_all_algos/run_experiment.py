@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from bandits_unconstrained.bandit_framework_COMBO.algorithms import ALGORITHMS
-from bandits_unconstrained.bandit_framework_COMBO.experiment import ExperimentSettings, run_experiment, save_results
+from bandits_unconstrained.bandit_framework_all_algos.algorithms import ALGORITHMS
+from bandits_unconstrained.bandit_framework_all_algos.experiment import ExperimentSettings, run_experiment, save_results
 
 
 def prompt_interactive() -> ExperimentSettings:

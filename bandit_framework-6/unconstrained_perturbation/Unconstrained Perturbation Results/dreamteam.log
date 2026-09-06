@@ -1,0 +1,35 @@
+============================================================
+Running dreamteam (seed=42)
+============================================================
+Algorithm: dreamteam
+  bandit_1: type=late, arms=2
+  bandit_2: type=ongoing, arms=5
+  bandit_3: type=ongoing, arms=2
+  bandit_4: type=late, arms=2
+  bandit_5: type=ongoing, arms=2
+  bandit_6: type=early, arms=3
+  bandit_7: type=late, arms=3
+  bandit_8: type=early, arms=2
+  bandit_9: type=early, arms=3
+
+Generated 9 tests (each = (initial_bias, optimal_arm)):
+  Initial bias: [1, 1, 1, 1, 0, 0, 2, 1, 1], Optimal arm: [1, 1, 0, 1, 0, 0, 1, 0, 1]
+  Initial bias: [1, 4, 1, 0, 1, 2, 0, 1, 0], Optimal arm: [1, 4, 1, 0, 0, 0, 2, 0, 1]
+  Initial bias: [0, 1, 0, 1, 1, 1, 2, 1, 0], Optimal arm: [1, 2, 0, 1, 0, 2, 2, 0, 2]
+  Initial bias: [0, 1, 1, 1, 1, 2, 2, 0, 2], Optimal arm: [1, 0, 0, 0, 1, 1, 1, 0, 0]
+  Initial bias: [1, 1, 1, 1, 1, 0, 1, 0, 0], Optimal arm: [1, 4, 1, 1, 1, 0, 0, 1, 0]
+  Initial bias: [0, 0, 0, 0, 1, 2, 0, 1, 1], Optimal arm: [1, 4, 1, 0, 0, 2, 2, 1, 2]
+  Initial bias: [1, 0, 1, 1, 0, 1, 0, 1, 2], Optimal arm: [0, 4, 0, 1, 0, 0, 1, 0, 2]
+  Initial bias: [0, 4, 1, 1, 0, 0, 1, 1, 0], Optimal arm: [0, 1, 0, 0, 1, 0, 2, 0, 0]
+  Initial bias: [1, 4, 0, 1, 1, 0, 2, 0, 2], Optimal arm: [1, 3, 1, 1, 1, 0, 0, 0, 0]
+
+Perturbations: at rounds [101, 201], flip 1 of 9 dimensions of the hidden optimal arm. Algorithm state does NOT reset.
+noise=0.0: done
+noise=0.2: done
+noise=0.4: done
+noise=0.6: done
+noise=0.8: done
+noise=1.0: done
+
+Saved 324000 per-round rows to /Users/farhan/Desktop/Multi-Armed Bandit/multiArmBanditDev/bandit_framework-6/unconstrained_perturbation/Unconstrained Perturbation Results/dreamteam_perturbation_rounds300_dims9_tests9_perturbs2_t101_t201_20260815_205945.csv
+Saved 1080 per-run summary rows to /Users/farhan/Desktop/Multi-Armed Bandit/multiArmBanditDev/bandit_framework-6/unconstrained_perturbation/Unconstrained Perturbation Results/dreamteam_perturbation_summary_rounds300_dims9_tests9_perturbs2_t101_t201_20260815_205946.csv
