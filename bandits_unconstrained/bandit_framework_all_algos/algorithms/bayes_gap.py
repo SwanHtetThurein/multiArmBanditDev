@@ -249,6 +249,22 @@ class BayesGap(RecommendationAlgorithm):
         if self.t % self.EXACT_REFRESH == 0:
             self.A = np.linalg.inv(self.XtX + np.diag(self.prior_prec))
 
+    def diagnostics(self) -> dict:
+        """The gap index driving the recommendation, and the arm pool size.
+
+        `best_gap` is BayesGap's own estimate of how much better the true best
+        arm could be than the one it would recommend now -- the quantity it is
+        minimising, and the natural convergence signal for this arm.
+        """
+        out = {"n_obs": len(self.y), "n_features": int(self.P),
+               "pool_size": len(self._pool),
+               "best_gap": (float(self._best_gap)
+                            if self._best_gap is not None else None),
+               "beta": float(self.BETA)}
+        if self.y:
+            out["best_y"] = float(max(self.y))
+        return out
+
     def predict_best(self) -> List[int]:
         if self.t <= self.N_INIT or self._recommendation is None:
             return (list(self.X_teams[int(np.argmax(self.y))])

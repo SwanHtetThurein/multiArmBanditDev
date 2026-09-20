@@ -327,6 +327,16 @@ class KnowledgeGradient(RecommendationAlgorithm):
         if self.t % self.EXACT_REFRESH == 0:
             self.A = np.linalg.inv(self.XtX + np.diag(self.prior_prec))
 
+    def diagnostics(self) -> dict:
+        """As BOCS, plus the candidate pool KG evaluates each round."""
+        out = {"n_obs": len(self.y), "n_features": int(self.P),
+               "pool_size": int(self.POOL_SIZE),
+               "space_size": float(self._space_size)}
+        if self.y:
+            out["best_y"] = float(max(self.y))
+            out["mean_y"] = float(sum(self.y) / len(self.y))
+        return out
+
     def predict_best(self) -> List[int]:
         if self.t <= self.N_INIT:
             return (list(self.X_teams[int(np.argmax(self.y))])

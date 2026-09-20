@@ -17,6 +17,7 @@ Usage:
 """
 
 import argparse
+import csv
 import glob
 import os
 import re
@@ -28,19 +29,49 @@ import pandas as pd
 
 
 # Filename pattern from run_perturbation_experiment.py:
-#   {algo}_perturbation_rounds300_dims9_tests9_perturbs2_t101_t201_<ts>.csv
+#   {algo}_limit-{mode}_perturbation_rounds300_dims9_tests9_perturbs2_t101_t201_<ts>.csv
+#
+# `_limit-<mode>` is optional so that CSVs written before the switching limit
+# existed still parse; those are treated as 'none'. The hyphen is required —
+# the algo group is `[a-z_]+`, so an underscore-joined tag containing a digit
+# would fail to match and the file would be silently dropped from the plots.
 FILENAME_RE = re.compile(
-    r"^(?P<algo>[a-z_]+)_perturbation_rounds(?P<rounds>\d+)_dims(?P<dims>\d+)"
-    r"_tests(?P<tests>\d+)_perturbs(?P<perturbs>\d+)"
-    r"(?P<round_str>(?:_t\d+)+)_(?P<ts>\d{8}_\d{6})\.csv$"
+    r"^(?P<algo>[a-z_]+?)(?:_limit-(?P<limit>[a-z0-9p]+))?"
+    r"_perturbation_rounds(?P<rounds>\d+)"
+    # Either the 500-setting protocol (_settingsN) or the older
+    # _dimsD_testsT naming, so results from both still parse.
+    r"(?:_settings(?P<settings>\d+)|_dims(?P<dims>\d+)_tests(?P<tests>\d+))"
+    r"_perturbs(?P<perturbs>\d+)"
+    r"(?P<round_str>(?:_t\d+)+)"
+    r"(?:_seed(?P<seed>\d+))?(?:_(?P<ts>\d{8}_\d{6}))?"
+    # Results are Parquet now; .csv still matches so older runs keep working.
+    r"\.(?P<ext>parquet|csv)$"
 )
+
+
+def condition_label(algo: str, limit: str) -> str:
+    """Display name for one (algorithm, switching-limit) condition."""
+    if not limit or limit == "none":
+        return algo
+    return f"{algo} [{limit}]"
+
+
+def condition_slug(label: str) -> str:
+    """Filesystem-safe form of a condition label, for plot filenames.
+
+    'bocs_hs [flat2]' -> 'bocs_hs_limit-flat2'. Keeps the spaces and brackets
+    of the display label out of filenames.
+    """
+    if " [" in label and label.endswith("]"):
+        algo, limit = label[:-1].split(" [", 1)
+        return f"{algo}_limit-{limit}"
+    return label
 ROUNDS_RE = re.compile(r"_t(\d+)")
 
 # Display order for algorithms in plots (unconstrained-only suite).
 ALGO_ORDER = [
     # reference points
     "dreamteam",
-    "dreamteam_orig",
     "random",
     # model-free combinatorial search
     "sa",
@@ -77,27 +108,72 @@ ALGO_ORDER = [
 ]
 
 
+def _candidate_files(results_dir: str):
+    """Per-round result files: Parquet first, CSV kept for older runs."""
+    out = []
+    for ext in ("parquet", "csv"):
+        out.extend(glob.glob(os.path.join(results_dir, f"*_perturbation_rounds*.{ext}")))
+    return out
+
+
+def _is_derived(path: str) -> bool:
+    """Skip files that are summaries or traces rather than per-round results."""
+    b = os.path.basename(path)
+    return ("_perturbation_summary_" in b or b.endswith("_summary.csv")
+            or b.endswith("_summary.parquet") or b.endswith("_trace.parquet"))
+
+
+def _read_frame(path: str):
+    """Load a per-round results file as a DataFrame, Parquet or CSV.
+
+    Also maps the 500-setting protocol's `run_id` back to `runID`, which is
+    what the plotting code downstream expects.
+    """
+    import pandas as _pd
+    df = _pd.read_parquet(path) if path.endswith(".parquet") else _pd.read_csv(path)
+    if "run_id" in df.columns and "runID" not in df.columns:
+        df = df.rename(columns={"run_id": "runID"})
+    return df
+
+
+def _read_rows(path: str):
+    """Read a per-round results file as a list of dicts, Parquet or CSV."""
+    if path.endswith(".parquet"):
+        import pyarrow.parquet as pq
+        return pq.read_table(path).to_pylist()
+    with open(path, "r") as f:
+        return list(csv.DictReader(f))
+
+
 def discover_files(results_dir: str):
-    """Return list of (algorithm, full_csv_path, perturbation_rounds).
-    Uses the most recent timestamp if multiple files exist for the same algorithm."""
+    """Return list of (label, full_csv_path, perturbation_rounds).
+
+    Keyed by (algorithm, switching limit) so the constrained and unconstrained
+    runs of one algorithm plot as separate series rather than one shadowing the
+    other. Uses the most recent timestamp within each condition."""
     files_by_algo = defaultdict(list)
-    for path in glob.glob(os.path.join(results_dir, "*_perturbation_rounds*.csv")):
-        if "_perturbation_summary_" in path:
+    for path in _candidate_files(results_dir):
+        if _is_derived(path):
             continue
         basename = os.path.basename(path)
         m = FILENAME_RE.match(basename)
         if not m:
             continue
         algo = m.group("algo")
-        ts = m.group("ts")
+        limit = m.group("limit") or "none"
+        ts = m.group("ts") or ""
         rounds = [int(x) for x in ROUNDS_RE.findall(m.group("round_str"))]
-        files_by_algo[algo].append((ts, path, rounds))
+        files_by_algo[(algo, limit)].append((ts, path, rounds))
     out = []
-    for algo, lst in files_by_algo.items():
+    for (algo, limit), lst in files_by_algo.items():
         lst.sort()
-        out.append((algo, lst[-1][1], lst[-1][2]))
-    # Order by ALGO_ORDER; unknowns go last.
-    return sorted(out, key=lambda x: ALGO_ORDER.index(x[0]) if x[0] in ALGO_ORDER else 999)
+        out.append((condition_label(algo, limit), algo, limit,
+                    lst[-1][1], lst[-1][2]))
+    # Order by ALGO_ORDER on the bare algorithm name (unknowns last), then by
+    # switching limit, so an algorithm's conditions sit together in the plots.
+    out.sort(key=lambda x: (ALGO_ORDER.index(x[1]) if x[1] in ALGO_ORDER else 999,
+                            x[2]))
+    return [(label, path, rounds) for label, _a, _l, path, rounds in out]
 
 
 def plot_per_algorithm(df, algo, perturbation_rounds, output_path):
@@ -296,17 +372,18 @@ def main():
 
     # All files should share the same perturbation pattern; use the first.
     perturbation_rounds = files[0][2]
-    print(f"Found {len(files)} algorithms; perturbation rounds = {perturbation_rounds}")
+    print(f"Found {len(files)} algorithm/switch-limit conditions; "
+          f"perturbation rounds = {perturbation_rounds}")
     print(f"  Using n_bandits={args.n_bandits}, p_perturb_dims={args.p_perturb_dims}")
     for algo, path, _ in files:
         print(f"  {algo}: {os.path.basename(path)}")
 
     all_recovery_rows = []
     for algo, path, rounds in files:
-        df = pd.read_csv(path)
+        df = _read_frame(path)
         df["algorithm"] = algo
         per_algo_out = os.path.join(args.output_dir,
-                                    f"perturbation_{algo}.png")
+                                    f"perturbation_{condition_slug(algo)}.png")
         plot_per_algorithm(df, algo, rounds, per_algo_out)
         rec = compute_recovery(df, rounds,
                                n_bandits=args.n_bandits,

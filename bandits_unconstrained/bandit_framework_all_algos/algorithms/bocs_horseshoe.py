@@ -259,6 +259,25 @@ class BocsHorseshoe(RecommendationAlgorithm):
         self.X_teams.append(list(arms_chosen))
         self.y.append(float(reward))
 
+    def diagnostics(self) -> dict:
+        """Horseshoe state: noise, global shrinkage, and how sparse the
+        sampled weight vector actually is -- the thing this arm exists to
+        measure against plain ridge shrinkage in `bocs`."""
+        import numpy as _np
+        out = {"n_obs": len(self.y), "n_features": int(self.P),
+               "sigma2": float(self.sigma2), "tau2": float(self.tau2)}
+        beta = getattr(self, "beta", None)
+        if beta is not None and len(beta):
+            b = _np.abs(_np.asarray(beta, dtype=float))
+            scale = float(b.max()) if b.size else 0.0
+            out["beta_absmean"] = float(b.mean())
+            out["beta_absmax"] = scale
+            # "effectively zero" relative to the largest weight
+            out["frac_near_zero"] = float(_np.mean(b < 0.01 * scale)) if scale > 0 else 0.0
+        if self.y:
+            out["best_y"] = float(max(self.y))
+        return out
+
     def predict_best(self) -> List[int]:
         if not self._started or len(self.y) <= self.N_INIT:
             return (list(self.X_teams[int(np.argmax(self.y))])

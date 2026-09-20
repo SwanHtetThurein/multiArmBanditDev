@@ -222,6 +222,17 @@ class NeuralLinearAlgorithm(RecommendationAlgorithm):
             self.Xty += reward * phi
             self.yty += reward * reward
 
+    def diagnostics(self) -> dict:
+        """Whether the network has been trained yet, and the data it sits on.
+        Network weights are thousands of numbers and are not recorded."""
+        import numpy as _np
+        out = {"n_obs": len(self.y), "trained": bool(self._trained),
+               "in_dim": int(self.in_dim), "n_features": int(self.P)}
+        if self.y:
+            out["best_y"] = float(max(self.y))
+            out["mean_y"] = float(_np.mean(self.y))
+        return out
+
     def predict_best(self) -> List[int]:
         if not self._trained or len(self.y) <= self.N_INIT:
             return (list(self.X_teams[int(np.argmax(self.y))])

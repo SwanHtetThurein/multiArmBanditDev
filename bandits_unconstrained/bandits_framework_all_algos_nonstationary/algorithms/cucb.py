@@ -115,6 +115,22 @@ class CUCBAlgorithm(RecommendationAlgorithm):
             self.sums[d][a] += reward
             self.counts[d][a] += 1.0
 
+    def diagnostics(self) -> dict:
+        """Per-base-arm coverage. `min_count` is the least-explored
+        (bandit, arm) pair -- CUCB's confidence radius is driven by it, so it
+        is the binding constraint on how optimistic the estimates still are."""
+        import math as _math
+        counts = [c for row in self.counts for c in row]
+        n = len(counts)
+        mn = min(counts) if counts else 0
+        return {
+            "t": int(self.t), "n_base_arms": n,
+            "min_count": int(mn), "max_count": int(max(counts)) if counts else 0,
+            "mean_count": float(sum(counts) / n) if n else None,
+            "max_radius": (float(_math.sqrt(self.RADIUS_C * _math.log(max(self.t, 2))
+                                            / (2 * max(mn, 1)))) if n else None),
+        }
+
     def predict_best(self) -> List[int]:
         if self.t == 0:
             return list(self.initial_bias)

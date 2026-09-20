@@ -223,6 +223,25 @@ class BootstrappedNN(RecommendationAlgorithm):
         # fixed online-bootstrap weights, drawn once when the point arrives
         self.masks.append(np.random.poisson(1.0, size=self.N_MODELS))
 
+    def diagnostics(self) -> dict:
+        """Ensemble state. Disagreement between members IS this method's
+        uncertainty estimate, so `ensemble_spread` on the last played team is
+        the quantity that drives its exploration."""
+        import numpy as _np
+        out = {"n_obs": len(self.y), "n_models": len(self.models),
+               "trained": bool(self._trained), "in_dim": int(self.in_dim)}
+        if self.y:
+            out["best_y"] = float(max(self.y))
+        if self._trained and self.last_choice is not None:
+            try:
+                x = self._encode([self.last_choice])
+                preds = [float(m.forward(x)[0][0]) for m in self.models]
+                out["ensemble_spread"] = float(_np.std(preds))
+                out["ensemble_mean"] = float(_np.mean(preds))
+            except Exception:
+                pass
+        return out
+
     def predict_best(self) -> List[int]:
         if not self._trained or len(self.y) <= self.N_INIT:
             return (list(self.X_teams[int(np.argmax(self.y))])

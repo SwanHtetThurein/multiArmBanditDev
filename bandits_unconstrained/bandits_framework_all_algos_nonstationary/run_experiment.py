@@ -1,91 +1,140 @@
-"""Entry point. Two ways to run:
+"""Entry point for the stationary sweep.
 
-Interactive (same prompts as the original script):
-    python run_experiment.py
+    python3 run_experiment.py --algorithm bocs
+    python3 run_experiment.py --algorithm bocs --n-cores 8
+    python3 run_experiment.py --algorithm bocs --switch-limit flat --max-changes 2
+    python3 run_experiment.py --all --n-cores 8          # every algorithm, in turn
 
-Non-interactive:
-    python run_experiment.py --bandits 9 --rounds 100
-    python run_experiment.py --bandits 12 --rounds 100 --algorithm dreamteam --seed 42
-    python run_experiment.py --bandits 9 --rounds 100 --algorithm random   # baseline
+Protocol: 500 sampled settings x 6 noise levels = 3000 runs per algorithm.
+Every algorithm reads the same settings file, so they all face identical
+problems; see sampling.py.
 
-Swap algorithms with --algorithm <name>; see algorithms/__init__.py for the
-registry of available names and how to add new ones.
+Resuming: press Ctrl-C at any time. Progress is checkpointed per run, and
+rerunning the same command picks up where it stopped. Use --no-resume to
+start the run over from scratch.
+
+Output is Parquet: a full per-round trace, a small results projection, and a
+manifest recording how the run was produced. --trace controls how much of the
+trace is kept (default: full).
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary.algorithms import ALGORITHMS
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary.experiment import ExperimentSettings, run_experiment, save_results
+PKG = "bandits_unconstrained.bandits_framework_all_algos_nonstationary"
+
+# BLAS threads must be capped before numpy is imported anywhere, or each
+# worker spawns its own thread pool and more cores makes the sweep slower.
+from bandits_unconstrained.bandits_framework_all_algos_nonstationary.parallel import (  # noqa: E402
+    limit_blas_threads, resolve_n_cores,
+)
 
 
-def prompt_interactive() -> ExperimentSettings:
-    print("\n=== Bandit Experiment Configuration ===\n")
-
-    names = ', '.join(sorted(ALGORITHMS))
-    while True:
-        algo = input(f"Algorithm [{names}] (default: dreamteam): ").strip() or "dreamteam"
-        if algo in ALGORITHMS:
-            break
-        print(f"  ✗ Unknown algorithm '{algo}'. Choose from: {names}\n")
-
-    while True:
-        n_bandits = int(input("How many bandits? (must be divisible by 3 for equal early/late/ongoing split): "))
-        if n_bandits > 0 and n_bandits % 3 == 0:
-            break
-        print(f"  ✗ {n_bandits} is not divisible by 3. Please re-enter a valid number (e.g. 3, 6, 9, 12...).\n")
-
-    while True:
-        total_rounds = int(input("How many rounds per experiment? "))
-        if total_rounds > 0:
-            break
-        print("  ✗ Rounds must be a positive integer. Please try again.\n")
-
-    return ExperimentSettings(algorithm=algo, n_bandits=n_bandits, total_rounds=total_rounds)
-
-
-def parse_args() -> ExperimentSettings:
-    parser = argparse.ArgumentParser(description="Multi-dimensional bandit experiment harness")
-    parser.add_argument("--algorithm", default=None, choices=sorted(ALGORITHMS),
-                        help="which recommendation algorithm to run (default: dreamteam)")
-    parser.add_argument("--bandits", type=int, default=None,
-                        help="number of bandits (must be divisible by 3)")
-    parser.add_argument("--rounds", type=int, default=None, help="rounds per run")
-    parser.add_argument("--tests", type=int, default=9, help="number of random test scenarios")
-    parser.add_argument("--runs", type=int, default=20, help="repetitions per test per noise level")
-    parser.add_argument("--noise", type=float, nargs="+", default=None,
-                        help="noise levels to sweep (default: 0.0 0.2 0.4 0.6 0.8 1.0)")
-    parser.add_argument("--seed", type=int, default=None, help="random seed for reproducibility")
-    args = parser.parse_args()
-
-    # No CLI config given -> fall back to interactive prompts, as the original did.
-    if args.bandits is None and args.rounds is None and args.algorithm is None:
-        return prompt_interactive()
-
-    settings = ExperimentSettings(
-        algorithm=args.algorithm or "dreamteam",
-        n_bandits=args.bandits if args.bandits is not None else 9,
-        total_rounds=args.rounds if args.rounds is not None else 100,
-        n_tests=args.tests,
-        runs_per_test=args.runs,
-        seed=args.seed,
+def parse_args():
+    from bandits_unconstrained.bandits_framework_all_algos_nonstationary.algorithms import ALGORITHMS
+    from bandits_unconstrained.bandits_framework_all_algos_nonstationary.environment import (
+        DEFAULT_MAX_CHANGES, NO_LIMIT, SWITCH_LIMIT_MODES,
     )
-    if args.noise is not None:
-        settings.noise_levels = args.noise
-    return settings
+    from bandits_unconstrained.bandits_framework_all_algos_nonstationary import sampling, tracing
+
+    p = argparse.ArgumentParser(
+        description="Multi-dimensional bandit sweep (500-setting protocol)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    p.add_argument("--algorithm", default=None, choices=sorted(ALGORITHMS),
+                   help="which algorithm to run")
+    p.add_argument("--all", action="store_true",
+                   help="run every registered algorithm, one after another")
+    p.add_argument("--rounds", type=int, default=100, help="rounds per run")
+    p.add_argument("--noise", type=float, nargs="+", default=None,
+                   help="noise levels (default: 0.0 0.2 0.4 0.6 0.8 1.0)")
+    p.add_argument("--seed", type=int, default=42,
+                   help="master seed for per-run RNG streams")
+    p.add_argument("--settings-seed", type=int, default=sampling.DEFAULT_SETTINGS_SEED,
+                   help="seed of the shared settings file (changes the benchmark)")
+    p.add_argument("--n-settings", type=int, default=sampling.N_SETTINGS,
+                   help="how many settings to sample")
+    p.add_argument("--settings-path", default=None,
+                   help="explicit path to a settings JSON file")
+    p.add_argument("--switch-limit", dest="switch_limit", default=NO_LIMIT,
+                   choices=list(SWITCH_LIMIT_MODES),
+                   help="cap on role changes per round, applied by the environment "
+                        "to every algorithm equally")
+    p.add_argument("--max-changes", dest="max_changes", type=float,
+                   default=DEFAULT_MAX_CHANGES,
+                   help="absolute cap for 'flat', or the mid-run peak for 'parabolic'")
+    p.add_argument("--n-cores", dest="n_cores", type=int, default=None,
+                   help="worker processes (default: all cores but one)")
+    p.add_argument("--no-resume", dest="resume", action="store_false",
+                   help="discard any existing progress and start over")
+    p.add_argument("--trace", default=tracing.DEFAULT_TRACE_LEVEL,
+                   choices=list(tracing.TRACE_LEVELS),
+                   help="how much per-round detail to record: 'off' writes no "
+                        "trace, 'basic' records the teams and the constraint's "
+                        "effect, 'full' adds each algorithm's internal state")
+    p.add_argument("--output-dir", default="Global results")
+    return p.parse_args(), ALGORITHMS
 
 
 def main():
-    settings = parse_args()
-    rows, config, tests = run_experiment(settings)
-    path = save_results(rows, settings)
-    print(f"\nSaved {len(rows)} rows to '{path}'")
+    args, ALGORITHMS = parse_args()
+
+    if not args.algorithm and not args.all:
+        print("Pick an algorithm with --algorithm NAME, or --all for every one.\n")
+        print("Available: " + ", ".join(sorted(ALGORITHMS)))
+        return 2
+
+    limit_blas_threads(resolve_n_cores(args.n_cores))
+
+    from bandits_unconstrained.bandits_framework_all_algos_nonstationary.experiment import (
+        ExperimentSettings, run_experiment,
+    )
+
+    algos = sorted(ALGORITHMS) if args.all else [args.algorithm]
+    results = []
+    for i, algo in enumerate(algos, start=1):
+        if len(algos) > 1:
+            print("=" * 62)
+            print(f"[{i}/{len(algos)}] {algo}")
+            print("=" * 62)
+        s = ExperimentSettings(
+            algorithm=algo,
+            total_rounds=args.rounds,
+            seed=args.seed,
+            settings_seed=args.settings_seed,
+            n_settings=args.n_settings,
+            settings_path=args.settings_path,
+            switch_limit=args.switch_limit,
+            max_changes=args.max_changes,
+            n_cores=args.n_cores,
+            resume=args.resume,
+            output_dir=args.output_dir,
+            trace=args.trace,
+        )
+        if args.noise is not None:
+            s.noise_levels = args.noise
+        r = run_experiment(s)
+        results.append(r)
+        if r["interrupted"]:
+            print("\nInterrupted. Rerun the same command to resume.")
+            break
+        print()
+
+    if len(results) > 1:
+        done = sum(1 for r in results if r["complete"])
+        print("=" * 62)
+        print(f"{done} of {len(results)} algorithms complete.")
+        if done < len(results):
+            print("Rerun the same command to finish the rest.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

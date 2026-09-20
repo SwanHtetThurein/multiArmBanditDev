@@ -210,6 +210,15 @@ class LinUCBAlgorithm(RecommendationAlgorithm):
         if self.t % self.EXACT_REFRESH == 0:      # kill accumulated drift
             self.A = np.linalg.inv(self.XtX + np.diag(self.prior_prec))
 
+    def diagnostics(self) -> dict:
+        """As BOCS, plus the optimism weight that distinguishes this arm."""
+        out = {"n_obs": len(self.y), "n_features": int(self.P),
+               "alpha": float(self.ALPHA)}
+        if self.y:
+            out["best_y"] = float(max(self.y))
+            out["mean_y"] = float(sum(self.y) / len(self.y))
+        return out
+
     def predict_best(self) -> List[int]:
         if self.t <= self.N_INIT:
             return (list(self.X_teams[int(np.argmax(self.y))])

@@ -319,6 +319,22 @@ class ComboSlice(RecommendationAlgorithm):
         self.X_teams.append(list(arms_chosen))
         self.y.append(float(reward))
 
+    def diagnostics(self) -> dict:
+        """Slice-sampling state: how many hyperparameter samples the
+        acquisition is being averaged over, and where they sit."""
+        import numpy as _np
+        out = {"n_obs": len(self.y),
+               "n_hyper_samples": len(self._samples) if self._samples else 0,
+               "rounds_since_refit": int(self._rounds_since_refit)}
+        th = getattr(self, "theta", None)
+        if th is not None:
+            t = _np.asarray(th, dtype=float)
+            out["theta_mean"] = float(t.mean())
+            out["theta_std"] = float(t.std())
+        if self.y:
+            out["best_y"] = float(max(self.y))
+        return out
+
     def predict_best(self) -> List[int]:
         if not self._started or len(self.y) <= self.N_INIT:
             return (list(self.X_teams[int(np.argmax(self.y))])

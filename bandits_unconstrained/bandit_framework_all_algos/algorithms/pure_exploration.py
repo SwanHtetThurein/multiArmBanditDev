@@ -164,6 +164,16 @@ class PureExploration(RecommendationAlgorithm):
         if self.t % self.EXACT_REFRESH == 0:
             self.A = np.linalg.inv(self.XtX + np.diag(self.prior_prec))
 
+    def diagnostics(self) -> dict:
+        """Observation count and the data's shape. The posterior itself is
+        ~470 numbers and is deliberately NOT recorded per round."""
+        out = {"n_obs": len(self.y), "n_features": int(self.P)}
+        if self.y:
+            out["best_y"] = float(max(self.y))
+            out["mean_y"] = float(sum(self.y) / len(self.y))
+            out["last_y"] = float(self.y[-1])
+        return out
+
     def predict_best(self) -> List[int]:
         if self.t <= self.N_INIT:
             return (list(self.X_teams[int(np.argmax(self.y))])

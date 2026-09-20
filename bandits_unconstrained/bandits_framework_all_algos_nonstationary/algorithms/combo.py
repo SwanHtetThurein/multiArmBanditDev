@@ -218,6 +218,23 @@ class ComboAlgorithm(RecommendationAlgorithm):
         self.X.append(list(arms_chosen))
         self.y.append(float(reward))
 
+    def diagnostics(self) -> dict:
+        """Fitted diffusion-kernel hyperparameters. `mean_log_beta` summarises
+        the per-dimension ARD parameters in one number; the spread says how
+        unequally the model weights the dimensions."""
+        import numpy as _np
+        lb = _np.asarray(self.log_beta, dtype=float)
+        out = {"n_obs": len(self.y),
+               "log_sf2": float(self.log_sf2), "log_sn2": float(self.log_sn2),
+               "mean_log_beta": float(lb.mean()) if lb.size else None,
+               "std_log_beta": float(lb.std()) if lb.size else None,
+               "fitted_n": int(self._fitted_n),
+               "rounds_since_fit": int(self._rounds_since_fit)}
+        if self.y:
+            out["best_y"] = float(max(self.y))
+            out["ymean"] = float(self._ymean)
+        return out
+
     def predict_best(self) -> List[int]:
         if self._chol is None or len(self.y) <= self.N_INIT:
             return list(self.X[int(np.argmax(self.y))]) if self.y else list(self.initial_bias)

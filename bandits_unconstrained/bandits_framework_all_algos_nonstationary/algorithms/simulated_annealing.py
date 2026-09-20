@@ -118,6 +118,16 @@ class SimulatedAnnealing(RecommendationAlgorithm):
             self.current = list(arms_chosen)
             self.current_score = reward
 
+    def diagnostics(self) -> dict:
+        """Temperature and incumbent. The temperature schedule is what makes
+        SA stop exploring late, which matters in the non-stationary runs."""
+        return {
+            "temperature": float(self._temperature(self._round)),
+            "incumbent_score": (float(self.current_score)
+                                if self.current_score is not None else None),
+            "round": int(self._round),
+        }
+
     def predict_best(self) -> List[int]:
         if not self._stats:
             return list(self.initial_bias)

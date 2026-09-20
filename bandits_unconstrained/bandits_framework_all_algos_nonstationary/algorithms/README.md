@@ -6,13 +6,22 @@
 > rounds 101 and 201. See `../README.md` in this folder for the non-stationary
 > design, and read Part 1 below as background on the shared problem, the
 > environment and the algorithm contract — all of which still apply.
+>
+> **The switching limit (§1.9) applies here too**, with one caveat that matters
+> a great deal in this folder: the `parabolic` mode is a single
+> settle-explore-converge arc sized to the whole run, and it knows nothing
+> about the perturbations. At 300 rounds the second perturbation (round 201)
+> has to be recovered from on an allowance that is already shrinking towards
+> zero, which penalises it relative to the first purely by position on the
+> curve. **Use `flat` for recovery comparisons** unless that interaction is
+> itself what you are studying.
 
 # The Algorithm Suite
 
 A guide to the benchmark: what the experiment is, why each algorithm is in it,
 and how each one works.
 
-This document covers the 27 algorithms registered in `__init__.py`. The parent
+This document covers the 26 algorithms registered in `__init__.py`. The parent
 directory's `README.md` covers how to *run* things; this one covers what is
 being run and why.
 
@@ -44,12 +53,13 @@ Formally this is a **multi-dimensional multi-armed bandit**, or equivalently a
 Each dimension also carries a **temporal type** — `early`, `late`, or
 `ongoing`, in equal thirds — describing when in a project that aspect of team
 structure would naturally be settled. This is metadata: only `dreamteam` and
-`dreamteam_orig` consume it (see §1.7).
+no registered algorithm consumes it (see §1.7).
 
 ## 1.2 The environment (`environment.py`)
 
-The environment owns the hidden answer and the noise. Algorithms cannot reach
-either — that separation is enforced structurally, not by convention.
+The environment owns the hidden answer, the noise, and the rule about how fast
+a team may change. Algorithms cannot reach any of the three — that separation
+is enforced structurally, not by convention.
 
 **Reward.** For a chosen team, let `p` be the fraction of dimensions matching
 the hidden optimum:
@@ -66,6 +76,9 @@ best guess and scores it against the hidden optimum:
 ```
 performance = (number of dimensions where predict_best() is correct) / n_bandits
 ```
+
+**Switching limit.** The environment also owns `SwitchLimiter`, which caps how
+many dimensions may differ between consecutive played teams. See §1.9.
 
 ## 1.3 What makes this hard
 
@@ -96,7 +109,7 @@ mainly in what that model assumes.
 ## 1.4 The harness (`experiment.py`)
 
 **Problem generation.** Random arm counts per dimension (2–5), and an equal
-`early`/`late`/`ongoing` split, shuffled.
+every dimension `ongoing` (there is no early/late split).
 
 **Test generation.** Each *test* is a random `(initial_bias, optimal_arm)` pair.
 `initial_bias` is the team the algorithm starts from — the structure the team is
@@ -139,6 +152,25 @@ Note that `choose()` and `predict_best()` are separate. An algorithm may play an
 exploratory team while recommending a different one. Every algorithm here uses
 that freedom except `random`, which recommends whatever it last played.
 
+There is a fourth, optional method:
+
+```python
+notify_played(arms_played, arms_requested=None) -> None
+```
+
+Called every round between `choose()` and `update()`. Under a switching limit
+(§1.9) the team an algorithm requests is not necessarily the team that gets
+played, and this is how an algorithm is told the difference. The base class
+default keeps `last_choice` in sync, which is all 24 of the 26 arms need. Two
+override it: `dreamteam` tracks an incumbent team that its renormalization is
+defined against, and `cocabo` must suppress its importance-weighted EXP3 update
+when the played action was not the one its own distribution drew.
+
+`update()` is always called with the team that was **actually played**. Every
+algorithm in this package reads its `arms_chosen` argument rather than
+something it stashed during `choose()` — verified across all 26 — so every
+surrogate, posterior and design matrix trains on reality without modification.
+
 ## 1.6 What is actually being measured
 
 The harness scores `predict_best()` every round. That is a **simple-regret**
@@ -165,13 +197,18 @@ optimizer.
 
 **Not held constant, and worth disclosing:**
 
-- **Side information.** `dreamteam` and `dreamteam_orig` consume
-  `bandit_types` (the early/late/ongoing split). No other algorithm does. That
-  matches how the baselines in the source papers work, but it means DreamTeam
-  has access to structure the others ignore.
-- **Switching freedom.** DreamTeam is switch-constrained by design; every other
-  algorithm may jump anywhere in the space each round. A fair account should
-  report switch counts alongside performance.
+- **Side information.** *Resolved — this used to be a live caveat.* DreamTeam
+  once consumed `bandit_types` (the early/late/ongoing split) while no other
+  algorithm did. Every dimension in this benchmark is now `ongoing`, so there
+  is no side information left for any arm to exploit and all 26 treat the
+  dimensions identically.
+- **Switching freedom.** *Resolved — this used to be a live caveat.* DreamTeam
+  was switch-constrained by design while every other algorithm could jump
+  anywhere each round. Both DreamTeam arms have had their internal budgets
+  removed and the constraint now lives in the environment (§1.9), where it
+  applies to every algorithm or to none. It is a swept factor rather than an
+  uncontrolled difference. Switch counts are still worth reporting alongside
+  performance, since the arms differ a lot in how much churn they *want*.
 - **Tuning.** DreamTeam's parameters were fixed in advance; the competitors use
   documented defaults from their papers. None received a serious
   hyperparameter search.
@@ -202,17 +239,82 @@ engineering:
 - **Each module's docstring cites its paper** and lists what was simplified
   relative to it.
 
+## 1.9 The switching limit
+
+A cap on how many dimensions may differ between consecutive played teams. It is
+a property of the environment, enforced at one point in
+`experiment.py::run_single`, and applies to every algorithm identically.
+
+| mode | allowance at round `t` |
+|---|---|
+| `none` *(default)* | unbounded |
+| `flat` | `K`, constant |
+| `parabolic` | `y(t) = K · (1 − ((t − T/2)/(T/2))²)` — zero at both ends, peak `K` at `T/2` |
+
+`K` is `--max-changes`, default 2.
+
+**Where `parabolic` comes from.** It is the budget the published DreamTeam
+algorithm applied to itself, lifted out and renamed. The motivation is that a
+team settles in at the start, experiments most freely in the middle, and
+converges by the end.
+
+**Randomized rounding.** `y(t)` is real-valued; the count of changed roles is an
+integer. `floor(y)` changes are always allowed, plus one more with probability
+`y − floor(y)`, so `E[allowance(t)] = y(t)` exactly. This is what keeps a hard
+per-round cap comparable to DreamTeam's soft cap on the *expected* number of
+changes. Measured error over 40,000 draws per round: < 0.004.
+
+**Truncation rule.** When more changes are requested than allowed, a uniformly
+random subset of the requested changes is applied and the rest revert. Random
+selection is what keeps enforcement inside one class — no algorithm needs to
+expose a scoring hook — and it favours no method over another. The alternative
+(each algorithm ranks its own proposed changes with its surrogate) would be
+kinder to the model-based arms but would put a piece of the constraint back
+inside every algorithm.
+
+**It limits velocity, not reach.** A run starts ~6 of 9 roles from the optimum,
+so even `flat 2` could reach it in three rounds of a hundred. Total allowance
+over a 100-round run: ~133 changes for `parabolic 2`, 200 for `flat 2`. What is
+really restricted is the ability to probe a *distant* team in order to learn
+from it.
+
+**Who feels it, measured.** Mean changes per round over a 40-round run at
+`noise = 0.4`, unconstrained vs. `flat 2`:
+
+| arm | unconstrained | under `flat 2` | comment |
+|---|---|---|---|
+| `cucb` | 8.25 | 1.93 | wants to rewrite the whole team every round |
+| `purexp`, `smac`, `bocs`, `cocabo` | 5.7 – 6.5 | ~1.95 | uniform or acquisition-driven jumps |
+| `dreamteam` | 3.5 – 4.3 | ~1.94 | sampling, rather than argmax, already damps it |
+| `combo`, `combo_slice` | ~1.7 | 0.57 – 0.68 | rarely want to move far anyway |
+| `ols` | 1.88 | 1.82 | barely notices |
+| `sa` | 1.52 | 1.52 | cap never binds |
+
+`sa` and `ols` move in single steps *relative to their own incumbent*, but the
+incumbent is not always the team last played (a rejected SA proposal leaves the
+incumbent behind), so they can register 2–3 changes in a round. The cap still
+almost never binds on them.
+
+**The cost to model-based arms is partly a warm-up artefact.** Every
+surrogate method opens with `N_INIT = 10` uniformly random teams, and a random
+team sits ~6 roles away. Under a cap those rounds get truncated, so those arms
+lose their space-filling initial design. Some of any measured drop is therefore
+attributable to a crippled warm-up rather than to the acquisition rule. The
+alternative — a constrained random walk during warm-up — was considered and
+rejected, because it would require editing `N_INIT` logic in ~18 algorithms and
+would break the claim that the arms are identical between conditions. Worth
+stating explicitly when reporting constrained results.
+
 ---
 
 # Part 2 — Map of the suite
 
-## 2.1 All 27 algorithms
+## 2.1 All 26 algorithms
 
 | name | family | models interactions? | one-line idea |
 |---|---|---|---|
 | `random` | floor | no | uniform random every round |
-| `dreamteam` | reference | no | this project's modified DreamTeam |
-| `dreamteam_orig` | reference | no | DreamTeam exactly as published (CHI 2018) |
+| `dreamteam` | reference | no | DreamTeam as published, CHI 2018 (standard Beta update) |
 | `sa` | model-free | n/a | simulated annealing with geometric cooling |
 | `ols` | model-free | n/a | greedy neighbourhood sweep, then random restart |
 | `regevo` | model-free | n/a | aging evolution over a population of teams |
@@ -285,10 +387,14 @@ implements the inference its paper actually specifies:
 These exist so that two documented fairness caveats become measured quantities
 instead of disclaimers.
 
-**(c) Published vs. modified DreamTeam.** `dreamteam_orig` is the CHI 2018
-algorithm; `dreamteam` is this project's descendant. Running them head to head
-measures what the modifications did — principally the replacement of the
-standard Beta update with a threshold-and-penalty rule.
+**(c) Constrained vs. unconstrained — the outer factor.** Every one of the
+26 arms can be run under `--switch-limit none`, `flat` or `parabolic`, which
+makes the whole table above a 3 × 27 design rather than a single column. This is
+what converts the old "switching freedom" fairness caveat (§1.7) into a measured
+quantity, and it tests a hypothesis worth stating: DreamTeam's constraint reads
+as a pure handicap, but under this environment's mean-coupled noise it may be
+*protective*, by preventing one lucky reward from dragging the team across the
+space.
 
 ## 2.3 How to read the families
 
@@ -340,90 +446,33 @@ is uniform allocation with a good one.
 
 ---
 
-## `dreamteam` — DreamTeam (this project's modified version)
+## `dreamteam` — DreamTeam as published
 `dreamteam.py` · reference
+**Source:** Zhou, Valentine & Bernstein, CHI 2018 (DOI 10.1145/3173574.3173682)
 
 ### Why it's in the benchmark
 This is the algorithm the project is about. Everything else exists to give it a
-context. It is also the only method here designed under a constraint the others
-ignore: a real team cannot be reorganized arbitrarily every round, so DreamTeam
-limits *when* and *how many* dimensions may change at once. That makes a raw
-performance comparison slightly unfair in its disfavour — the competitors are
-unconstrained — which is why switch-count accounting belongs in any writeup.
+context.
+
+It is the published algorithm, unmodified. An earlier version of this package
+also carried a *modified descendant* of it under this name — one that replaced
+the Beta update with a threshold-and-penalty rule (`alpha += r` when the reward
+exceeded 0.1, `beta += 1000` otherwise). That variant has been removed, so
+there is now one DreamTeam arm and it is the paper's.
 
 ### How it works
-Per-dimension Thompson sampling, wrapped in two layers of temporal constraint.
+Per-dimension Thompson sampling with the standard Beta update.
 
-**1. Beliefs.** Each dimension keeps a Beta(α, β) posterior per arm, initialized
-Beta(1, 1).
+**1. Beliefs.** Each dimension keeps a Beta(α, β) posterior per arm,
+initialized Beta(1, 1).
 
 **2. Thompson sampling.** Each round, for every dimension, draw one sample from
 each arm's Beta and normalize the draws into a probability vector.
 
-**3. Per-dimension stickiness schedule.** A discount `δ` shrinks the
-probability of moving off the currently held arm, on a schedule set by the
-dimension's temporal type (`half = total_rounds / 2`):
+**3. Selection.** Sample (not argmax) one arm per dimension from those vectors.
+Round 1 always plays `initial_bias`.
 
-```
-early    δ = 1 / (1 + e^(round - half))     free early, frozen late
-late     δ = 1 / (1 + e^(half - round))     frozen early, free late
-ongoing  δ = 1                              never restricted
-```
-
-The renormalization moves the discounted mass onto the current arm:
-`p_i ← p_i · δ` for `i ≠ current`, and the current arm absorbs the remainder.
-
-**4. Global switching budget.** Team adaptability is modelled as a downward
-parabola peaking mid-run:
-
-```
-y = 2 · (1 - ((round - half) / half)²)
-```
-
-Let `z` be the total probability mass sitting off-current across all
-dimensions — the expected number of simultaneous changes. If `z > y`, every
-dimension is scaled **proportionally** by `y/z`, which drives the expected
-number of changes to exactly `y`.
-
-**5. Selection.** Sample (not argmax) one arm per dimension from the final
-distributions. Round 1 always plays `initial_bias`.
-
-**6. Update — the modified part.**
-
-```
-if reward > 0.1:  alpha[arm] += reward
-else:             beta[arm]  += 1000
-```
-
-**7. Recommendation.** Per-dimension argmax of `α/(α+β)`.
-
-### Caveats
-Step 6 is not a Bayesian update. A reward at or below 0.1 adds 1000 to β, which
-collapses that arm's posterior mean to essentially zero in one observation and
-makes it practically unrecoverable. Failure is also never credited
-proportionally: rewards of 0.11 and 0.99 both only increase α. Under this
-environment's reward-scaled noise, a good team can draw a low reward by chance
-and have several of its *correct* arms permanently condemned. Compare against
-`dreamteam_orig` to measure the effect.
-
----
-
-## `dreamteam_orig` — DreamTeam as published
-`dreamteam_original.py` · reference
-**Source:** Zhou, Valentine & Bernstein, CHI 2018 (DOI 10.1145/3173574.3173682)
-
-### Why it's in the benchmark
-Without it, the paper cannot say what its own modifications did. `dreamteam` is
-a descendant of the published algorithm, not the algorithm itself, and the two
-differ in ways that plausibly matter a great deal under this noise model. This
-arm turns "we modified it" into a measured quantity.
-
-### How it works
-Identical to `dreamteam` in structure — Beta posteriors, Thompson sampling,
-the same sigmoid schedules, the same parabolic budget, probabilistic
-selection — with two substantive differences.
-
-**The posterior update is the standard one:**
+**4. Update.**
 
 ```
 alpha[arm] += r
@@ -433,36 +482,44 @@ beta[arm]  += (1 - r)
 Every observation moves the posterior by exactly one unit of evidence, split
 between success and failure in proportion to the reward.
 
-**The global constraint shares the cut equally rather than proportionally.**
-Where `dreamteam` scales all dimensions by `y/z`, the published rule computes
-a per-dimension discount:
+**5. Recommendation.** Per-dimension argmax of `α/(α+β)`.
 
-```
-d_global = clamp(1 - excess / (z_d · D), 0, 1)      where excess = z - y
-```
+### Two of the paper's mechanisms are inactive here
 
-Applied to dimension `d`, this subtracts `excess/D` from its off-current mass —
-an equal *absolute* share from every dimension, rather than an equal
-proportional one. A dimension that only mildly wants to move can be silenced
-entirely, while proportional scaling would have preserved the relative ordering.
+**The temporal schedule.** The paper assigns each dimension a type — `early`,
+`late` or `ongoing` — and discounts its probability of changing on a sigmoid
+schedule keyed to the run length. This benchmark's sampling protocol makes
+every dimension `ongoing`, and an `ongoing` dimension has discount `d = 1`,
+which makes the renormalization the identity. The harness plug-in therefore
+does not apply the schedule at all. This is not a simplification: it is
+verified to be numerically a no-op under this protocol, and
+`dimensional_discount()` remains in the file for any future protocol that
+reintroduces mixed types.
 
-### A verified property worth knowing
-Because `d_global` is clamped at 0, the published budget is a **soft** cap.
-When a dimension's `z_d` is smaller than `excess/D` its discount clamps and it
-surrenders only `z_d` instead of its full share; the shortfall is not
-redistributed, so the realized total sits *above* `y`. Measured over 1500
-trials: the overshoot occurred in exactly the trials where the clamp fired, and
-was exactly zero otherwise. `dreamteam`'s proportional rule hits `y` exactly
-every time. Do not attribute a `dreamteam` vs `dreamteam_orig` difference
-solely to the posterior update without accounting for this.
+**The global switching budget.** The paper caps the expected number of
+simultaneous changes with a downward parabola peaking at `T/2`. That budget has
+been lifted out into `environment.SwitchLimiter` (§1.9), where it is the
+`parabolic` mode applied to every algorithm equally. Keeping it inside the
+algorithm made DreamTeam the only switch-constrained arm in a field of
+unconstrained competitors, which is a fairness problem rather than a feature.
+Run the suite with `--switch-limit parabolic --max-changes 2` to put everyone
+under the budget DreamTeam used to impose on itself.
+
+`notify_played()` is overridden here because each dimension's `current_arm` is
+what the renormalization is defined against, so it must track the team the
+environment actually fielded rather than the one the algorithm sampled.
 
 ### Also in this file
 A standalone `DreamTeam` class reproducing the paper's fixed five-dimension
 system — Hierarchy, Interaction Patterns, Norms of Engagement, Decision-Making
 Norms, Feedback Norms; 3×3×3×5×3 = 405 structures — with its own
-`initialize()` / `get_current_structure()` / `step(reward)` interface. Both
-classes share one engine, so the math cannot drift between them. The harness
-plug-in generalizes to any number of dimensions.
+`initialize()` / `get_current_structure()` / `step(reward)` interface. It keeps
+the early/late temporal schedule, because those five named dimensions genuinely
+have different types. It is **not** registered with the harness and never runs
+during a sweep; it exists so the published behaviour can be reproduced
+directly. Note that it applies no switching cap either — wrap it in
+`SwitchLimiter.project()` if you want the paper's budget when driving it by
+hand.
 
 ---
 
@@ -1274,8 +1331,10 @@ cleanest available control for DreamTeam**. DreamTeam also keeps a Beta
 posterior per (bandit, arm) and also feeds it the joint reward. CTS is what that
 design looks like when done by the book: an unbiased Bernoulli update instead of
 the "+reward on success, +1000 to beta on failure" rule, and no stickiness
-schedule or global switching budget. Any gap between `cts` and `dreamteam` is
-attributable to DreamTeam's bespoke machinery.
+schedule. Any gap between `cts` and `dreamteam` is attributable to DreamTeam's
+bespoke machinery — which, since the global budget moved into the environment
+(§1.9), now means the Beta-posterior bookkeeping and probabilistic selection —
+the temporal schedule is inactive, since every dimension here is `ongoing`.
 
 ### How it works
 Keep a Beta(α, β) posterior for every base arm, starting Beta(1, 1). Each round
@@ -1550,12 +1609,12 @@ Indicative only — hardware and arm counts move these.
 | tier | algorithms | approx. full sweep |
 |---|---|---|
 | free | `random`, `sa`, `ols`, `regevo`, `cucb`, `cts` | < 0.5 min |
-| cheap | `dreamteam`, `dreamteam_orig`, `cocabo`, `purexp` | 0.2 – 2 min |
+| cheap | `dreamteam`, `cocabo`, `purexp` | 0.2 – 2 min |
 | moderate | `casmopolitan`, `glm_fpl`, `bayesgap`, `gp_ts`, `gp_onehot`, `gp_ucb`, `neurallinear` | 3 – 6 min |
 | heavy | `kg`, `bocs_hs`, `bootnn`, `gp_nei`, `combo`, `combo_slice`, `linucb` | 8 – 18 min |
 | heaviest | `bocs`, `sts`, `smac` | ~34 min each |
 
-Running all 27 is on the order of four hours.
+Running all 26 is on the order of four hours.
 
 ## A.2 Shared conventions at a glance
 
@@ -1569,6 +1628,8 @@ Running all 27 is on the order of four hours.
 | Prior scales | `G_FIRST = 1.0`, `G_SECOND = 0.25` | the same, except `glm_fpl` (ridge) |
 | Noise prior | `InvGamma(A0=2.0, B0=0.05)` | the same, except `glm_fpl` (logistic likelihood) |
 | One-hot GP kernel | `exp(-hamming / rho)`, profile-likelihood grid fit | `gp_onehot`, `gp_nei`, `gp_ucb`, `gp_ts`, `casmopolitan` |
+| Switching limit | `none` / `flat K` / `parabolic K`, enforced by the environment | all 26, identically |
+| Played-team feedback | `update()` receives the team actually played; `notify_played()` precedes it | all 26 |
 
 ## A.3 Adding a new algorithm
 
@@ -1582,6 +1643,13 @@ Conventions worth following, so the new arm is comparable to the rest: play
 `initial_bias` on round 1; use `N_INIT = 10` random rounds if the method is
 model-based; use the shared local-search optimizer; and write a module
 docstring that cites the source and lists every simplification relative to it.
+
+You do **not** need to do anything to support the switching limit (§1.9). It is
+enforced by the environment, and as long as your `update()` reads its
+`arms_chosen` argument — rather than something you stored during `choose()` —
+your model will train on the team that was actually played. Override
+`notify_played()` only if you keep your own incumbent team, or if your update is
+invalid for actions you did not draw yourself.
 
 ## A.4 Source papers
 

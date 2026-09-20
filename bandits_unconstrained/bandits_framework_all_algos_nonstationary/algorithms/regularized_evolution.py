@@ -95,6 +95,17 @@ class RegularizedEvolution(RecommendationAlgorithm):
         if len(self._population) > self.POPULATION:
             self._population.popleft()      # aging: oldest dies, not worst
 
+    def diagnostics(self) -> dict:
+        """Population health. Aging evolution evicts the OLDEST member, so a
+        collapsing spread means the search has converged rather than stalled."""
+        scores = [s for _t, s in self._population] if self._population else []
+        return {
+            "population_size": len(self._population),
+            "pop_best": float(max(scores)) if scores else None,
+            "pop_mean": float(sum(scores) / len(scores)) if scores else None,
+            "pop_worst": float(min(scores)) if scores else None,
+        }
+
     def predict_best(self) -> List[int]:
         if not self._stats:
             return list(self.initial_bias)

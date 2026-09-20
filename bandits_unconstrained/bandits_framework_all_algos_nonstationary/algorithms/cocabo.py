@@ -242,6 +242,20 @@ class CoCaBO(RecommendationAlgorithm):
                 self.last_choice = cand_a if score_a >= score_b else cand_b
         return list(self.last_choice)
 
+    def notify_played(self, arms_played, arms_requested=None) -> None:
+        """Invalidate the EXP3 update when the switching limit altered the team.
+
+        EXP3's importance weighting r / p_a is only unbiased for an action the
+        agent actually drew from its own distribution. If the environment
+        reverted some of the requested role changes, the played team was not
+        drawn from that distribution and the weights must not be updated --
+        the same guard the `_played_from_exp3` flag already enforces for the
+        GP-proposed rounds.
+        """
+        self.last_choice = list(arms_played)
+        if arms_requested is not None and list(arms_played) != list(arms_requested):
+            self._played_from_exp3 = False
+
     def update(self, arms_chosen: List[int], reward: float) -> None:
         self.X_teams.append(list(arms_chosen))
         self.y.append(float(reward))
@@ -257,6 +271,27 @@ class CoCaBO(RecommendationAlgorithm):
             if tune:
                 self._rounds_since_tune = 0
             self._refresh(tune=tune)
+
+    def diagnostics(self) -> dict:
+        """EXP3 vs GP: which mechanism chose, and how concentrated the EXP3
+        agents have become. Entropy near its maximum means the agents are
+        still spreading their mass; near zero means they have committed."""
+        import numpy as _np
+        ent = []
+        for lw in self.log_w:
+            w = _np.exp(_np.asarray(lw, dtype=float) - _np.max(lw))
+            pr = w / w.sum()
+            ent.append(float(-_np.sum(pr * _np.log(pr + 1e-12))))
+        out = {"n_obs": len(self.y),
+               # one EXP3 exploration rate per dimension, not a scalar
+               "mean_gamma": float(_np.mean(self.gamma)),
+               "played_from_exp3": bool(self._played_from_exp3),
+               "mean_exp3_entropy": float(_np.mean(ent)) if ent else None,
+               "min_exp3_entropy": float(min(ent)) if ent else None,
+               "eta": float(self.eta), "sf2": float(self.sf2)}
+        if self.y:
+            out["best_y"] = float(max(self.y))
+        return out
 
     def predict_best(self) -> List[int]:
         if self._chol is None or len(self.y) <= self.N_INIT:

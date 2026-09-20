@@ -231,6 +231,16 @@ class SmacAlgorithm(RecommendationAlgorithm):
                                            or len(self.y) - self._fitted_n >= self.REFIT_EVERY):
             self._fit_forest()
 
+    def diagnostics(self) -> dict:
+        """Forest state. Tree count is fixed; `fitted_n` says how stale the
+        forest is relative to the data it should have been built on."""
+        out = {"n_obs": len(self.y), "n_trees": len(self._forest) if self._forest else 0,
+               "fitted_n": int(self._fitted_n)}
+        if self.y:
+            out["best_y"] = float(max(self.y))
+            out["mean_y"] = float(sum(self.y) / len(self.y))
+        return out
+
     def predict_best(self) -> List[int]:
         if self._forest is None or len(self.y) <= self.N_INIT:
             return (list(self.X_teams[int(np.argmax(self.y))])

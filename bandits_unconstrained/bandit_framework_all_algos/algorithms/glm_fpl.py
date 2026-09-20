@@ -186,6 +186,24 @@ class GLMFollowPerturbedLeader(RecommendationAlgorithm):
         self.X_teams.append(list(arms_chosen))
         self.y.append(float(reward))
 
+    def diagnostics(self) -> dict:
+        """GLM state. The perturbation scale is this arm's only exploration
+        knob, so recording it alongside the fit makes the trace self-contained."""
+        import numpy as _np
+        out = {"n_obs": len(self.y),
+               "n_dims": int(self.D),
+               # _d holds the dual coefficients of the last fit, and is None
+               # until one has happened -- so it reports fit state, not size
+               "fitted": self._d is not None,
+               "n_dual_coefs": (int(_np.size(self._d))
+                                if self._d is not None else 0),
+               "perturb_scale": float(self.PERTURB_SCALE),
+               "ridge": float(self.RIDGE)}
+        if self.y:
+            out["best_y"] = float(max(self.y))
+            out["mean_y"] = float(_np.mean(self.y))
+        return out
+
     def predict_best(self) -> List[int]:
         if len(self.y) <= self.N_INIT:
             return (list(self.X_teams[int(np.argmax(self.y))])

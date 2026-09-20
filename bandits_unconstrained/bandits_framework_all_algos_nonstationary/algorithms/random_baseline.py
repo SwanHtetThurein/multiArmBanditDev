@@ -25,5 +25,9 @@ class RandomBaseline(RecommendationAlgorithm):
     def update(self, arms_chosen: List[int], reward: float) -> None:
         pass  # learns nothing
 
+    def diagnostics(self) -> dict:
+        """Nothing to report -- the baseline holds no state."""
+        return {}
+
     def predict_best(self) -> List[int]:
         return list(self.last_choice)

@@ -1,91 +1,130 @@
-"""300-round unconstrained perturbation experiment driver (non-stationary).
+"""Non-stationary perturbation driver — 500-setting protocol, parallel, resumable.
 
-Runs an UNCONSTRAINED bandit benchmark over all algorithms registered in
-`algorithms/__init__.py` — 21 of them, the full suite from
-`bandit_framework_all_algos`. The hidden optimal arm is swapped at TWO rounds
-(101 and 201 by default), each time flipping 1 of the 9 dimensions.
-Algorithms keep their state across both swaps — this is the non-stationary
-regime. We measure how quickly each algorithm recovers after each
-perturbation.
+The hidden optimal arm is swapped at two rounds (101 and 201 by default), each
+time flipping `--p_perturb_dims` of that setting's dimensions. Algorithm state
+is never reset, so what is measured is how fast each method notices the answer
+moved and recovers.
 
-The experimental design is identical to bandit_framework-6's
-`unconstrained_perturbation/` setup; only the algorithm roster is wider.
+Protocol (see sampling.py)
+--------------------------
+500 settings are sampled once into a shared JSON file: each is
+<n_bandits from {3,6,9}, arm counts 2-5, all dimensions 'ongoing'> plus one
+initial_bias and one optimal_arm. Every algorithm loads that same file, so all
+of them face identical problems.
 
-Usage:
-    python run_perturbation_experiment.py --algorithm dreamteam --seed 42
-    python run_perturbation_experiment.py --algorithm bocs --bandits 9 --rounds 300
-    python run_perturbation_experiment.py --algorithm neuralucb --perturbation_rounds 101 201
+One run = one (setting, noise level) pair. With 6 noise levels that is
+500 x 6 = 3000 runs per algorithm. No repetitions -- the 500 independent
+settings carry the variation that repetitions used to.
 
-The 'phase' column in the output CSV marks rounds as 'pre' (1..99),
-'post1' (100..199), or 'post2' (200..300). The performance metric is the
-fraction of dimensions whose predict_best() matches the CURRENT optimal arm
-at each round, so performance naturally drops at each perturbation and
-recovers later.
+The perturbation chain for each setting is derived from the setting id alone,
+so every algorithm also faces the identical swaps at the identical rounds.
 
-Output schema (per-round):
-    rowid, runID, noise_level, round, performance, phase, baseline
-where baseline = mean(performance over rounds 80..100) for the run.
+Dimensions now VARY per setting
+-------------------------------
+This matters for reading the results. One flipped dimension is a 1/3 shock on
+a 3-dimension setting and a 1/9 shock on a 9-dimension one, so the size of the
+dip depends on the setting as much as on the algorithm. `n_bandits` is written
+into every row for exactly this reason: group by it before comparing dips or
+recovery times. The recovery metrics below use each run's own `n_bandits`.
 
-Two CSVs are written per algorithm: a full per-round CSV and a per-run
-summary CSV with the recovery metrics. The aggregator reads the per-round
-CSVs.
+Execution
+---------
+`--n-cores` worker processes with a tqdm progress bar; results are
+checkpointed per run. Ctrl-C at any time and rerun the same command to resume.
+Task seeding is independent of core count and completion order, so 1 core,
+16 cores, and an interrupted-then-resumed run all produce identical output.
 
-Default output dir: "Unconstrained Perturbation Results" (relative to this
-script).
+Switching limit
+---------------
+`--switch-limit none|flat|parabolic` with `--max-changes K`, enforced by the
+environment for every algorithm equally. `--max-changes` is an ABSOLUTE number
+of dimensions, so at K=2 it constrains a 9-dimension setting far more than a
+3-dimension one.
+
+READ THIS BEFORE USING `parabolic` HERE. The parabolic allowance is one
+settle-explore-converge arc sized to the whole run, and it knows nothing about
+the perturbations. At the swaps themselves the allowance is nearly identical
+(y(101) = 1.79, y(201) = 1.77), but the recovery windows sit on opposite sides
+of the peak: rounds 102-201 carry a mean allowance of 1.93 (193 changes in
+total) while rounds 202-300 carry only 1.02 (101 changes), decaying to zero.
+Recovery from the second perturbation therefore gets about half the churn
+budget of the first, which confounds recovery-time comparisons between the two
+events. Use `flat` for recovery work unless that interaction is the object of
+study.
+
+Output (Parquet)
+----------------
+    <stem>_trace.parquet    one row per ROUND: the team the algorithm wanted,
+                            the team it was allowed to play, which changes the
+                            constraint blocked, the reward, its recommendation,
+                            its internal diagnostics, plus `phase` and the
+                            run's pre-perturbation `baseline`
+    <stem>.parquet          the results projection
+    <stem>_summary.parquet  per-run recovery metrics, four per perturbation
+    <stem>_manifest.json    seeds, settings digest, switch limit, versions
+
+`--trace` controls the detail level (off / basic / full; default full).
 """
+
+from __future__ import annotations
 
 import argparse
 import csv
-import math
+import hashlib
+import time
 import os
 import random
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-import numpy as np
-
-# This script lives inside the package, so put the repository root on the
-# path and import through the package like the rest of the framework does.
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary.algorithms import ALGORITHMS, get_algorithm  # noqa: E402
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary.environment import TeamRewardEnvironment  # noqa: E402
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary.experiment import (  # noqa: E402
-    DEFAULT_NOISE_LEVELS, generate_problem, generate_tests)
+PKG = "bandits_unconstrained.bandits_framework_all_algos_nonstationary"
 
+from bandits_unconstrained.bandits_framework_all_algos_nonstationary import parallel  # noqa: E402
+from bandits_unconstrained.bandits_framework_all_algos_nonstationary.parallel import (  # noqa: E402
+    Checkpoint, derive_streams, seed_globals, task_id, task_seed,
+)
+from bandits_unconstrained.bandits_framework_all_algos_nonstationary import sampling, tracing  # noqa: E402
+from bandits_unconstrained.bandits_framework_all_algos_nonstationary.algorithms import (  # noqa: E402
+    ALGORITHMS, get_algorithm, ProblemConfig,
+)
+from bandits_unconstrained.bandits_framework_all_algos_nonstationary.environment import (  # noqa: E402
+    NO_LIMIT, DEFAULT_MAX_CHANGES, SWITCH_LIMIT_MODES, SwitchLimiter,
+    TeamRewardEnvironment,
+)
 
-# Default output directory (created on first save).
 DEFAULT_OUTPUT_DIR = "Unconstrained Perturbation Results"
-
-# Default perturbations: rounds 101 and 201 (each flips 1 of 9 dimensions).
+DEFAULT_NOISE_LEVELS = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
 DEFAULT_PERTURBATION_ROUNDS = (101, 201)
 DEFAULT_PERTURB_DIMS = 1
+
 
 
 @dataclass
 class PerturbationSettings:
     algorithm: str = "dreamteam"
-    n_bandits: int = 9
     total_rounds: int = 300
     perturbation_rounds: Tuple[int, ...] = DEFAULT_PERTURBATION_ROUNDS
     p_perturb_dims: int = DEFAULT_PERTURB_DIMS
-    n_tests: int = 9
-    runs_per_test: int = 20
     noise_levels: List[float] = field(default_factory=lambda: list(DEFAULT_NOISE_LEVELS))
-    min_arms: int = 2
-    max_arms: int = 5
-    seed: Optional[int] = None
+    seed: int = 42
+    settings_seed: int = sampling.DEFAULT_SETTINGS_SEED
+    n_settings: int = sampling.N_SETTINGS
+    settings_path: Optional[str] = None
     output_dir: str = DEFAULT_OUTPUT_DIR
-    baseline_window: Tuple[int, int] = (80, 100)   # inclusive pre-perturbation window
+    baseline_window: Tuple[int, int] = (80, 100)
+    switch_limit: str = NO_LIMIT
+    max_changes: float = DEFAULT_MAX_CHANGES
+    n_cores: Optional[int] = None
+    resume: bool = True
+    trace: str = tracing.DEFAULT_TRACE_LEVEL
 
     def validate(self):
-        if self.n_bandits <= 0 or self.n_bandits % 3 != 0:
-            raise ValueError(f"n_bandits must be a positive multiple of 3, got {self.n_bandits}")
         if self.total_rounds <= 0:
             raise ValueError("total_rounds must be positive")
         if not self.perturbation_rounds:
@@ -93,199 +132,226 @@ class PerturbationSettings:
         for pr in self.perturbation_rounds:
             if not (1 <= pr < self.total_rounds):
                 raise ValueError(
-                    f"perturbation_round {pr} must be in [1, {self.total_rounds - 1}]"
-                )
-        # Must be strictly increasing
+                    f"perturbation_round {pr} must be in [1, {self.total_rounds - 1}]")
         if list(self.perturbation_rounds) != sorted(self.perturbation_rounds):
             raise ValueError("perturbation_rounds must be in ascending order")
-        if not (1 <= self.p_perturb_dims <= self.n_bandits):
+        if self.p_perturb_dims < 1:
+            raise ValueError("p_perturb_dims must be >= 1")
+        # Dimensions vary per setting now, so the old
+        # `p_perturb_dims <= n_bandits` check has to be made against the
+        # SMALLEST setting rather than one global n_bandits.
+        if self.switch_limit not in SWITCH_LIMIT_MODES:
             raise ValueError(
-                f"p_perturb_dims must be in [1, {self.n_bandits}], got {self.p_perturb_dims}"
-            )
+                f"switch_limit must be one of {', '.join(SWITCH_LIMIT_MODES)}, "
+                f"got '{self.switch_limit}'")
+        if self.max_changes < 0:
+            raise ValueError("max_changes must be >= 0")
+        if self.trace not in tracing.TRACE_LEVELS:
+            raise ValueError(
+                f"trace must be one of {', '.join(tracing.TRACE_LEVELS)}, "
+                f"got '{self.trace}'")
+        lo, hi = self.baseline_window
+        if not (1 <= lo <= hi <= self.total_rounds):
+            raise ValueError(
+                f"--baseline-window {lo} {hi} is out of range for a "
+                f"{self.total_rounds}-round run")
+        if hi > self.perturbation_rounds[0]:
+            raise ValueError(
+                f"--baseline-window {lo} {hi} must end at or before the first "
+                f"perturbation (round {self.perturbation_rounds[0]}). The baseline "
+                f"is each run's pre-perturbation performance, so measuring it after "
+                f"a swap would be wrong. Pass a matching --baseline-window, e.g. "
+                f"--baseline-window {max(1, self.perturbation_rounds[0] - 20)} "
+                f"{self.perturbation_rounds[0]}")
+
+    def make_limiter(self, rng=None) -> SwitchLimiter:
+        return SwitchLimiter(mode=self.switch_limit, max_changes=self.max_changes,
+                             total_rounds=self.total_rounds, rng=rng)
+
+    def limit_tag(self) -> str:
+        return self.make_limiter().label()
+
+
+# ── perturbation chains ──────────────────────────────────────────────────────
+
+def perturb_rng_for(settings_seed: int, setting_id: int) -> random.Random:
+    """A per-setting RNG for the swaps, independent of algorithm and of the
+    master run seed, so every algorithm and every switch-limit condition sees
+    the identical perturbations."""
+    key = f"perturb|{settings_seed}|{setting_id}".encode("utf-8")
+    return random.Random(int.from_bytes(hashlib.sha256(key).digest()[:8], "big"))
 
 
 def make_perturbed_optimal(previous: List[int], arm_counts: List[int],
                            p: int, rng: random.Random) -> List[int]:
-    """Return a new optimal arm that differs from `previous` in exactly p
-    randomly chosen dimensions. For each flipped dimension, the new arm is
-    drawn uniformly from {0..n-1} \\ {previous[d]} until it differs."""
+    """A new optimum differing from `previous` in exactly p random dimensions."""
     new = list(previous)
     candidates = list(range(len(previous)))
     rng.shuffle(candidates)
-    flipped = 0
-    for d in candidates:
-        if flipped >= p:
-            break
-        n = arm_counts[d]
-        options = [a for a in range(n) if a != previous[d]]
+    for d in candidates[:p]:
+        options = [a for a in range(arm_counts[d]) if a != previous[d]]
         new[d] = rng.choice(options)
-        flipped += 1
-    assert flipped == p
     return new
 
 
-def run_single_with_perturbations(
-    algo_cls, config, initial_bias: List[int],
-    optimal_arm: List[int], total_rounds: int, noise: float,
-    perturbation_rounds: Tuple[int, ...], perturbed_optima: List[List[int]],
-):
-    """One run: fresh algorithm, fresh environment. At each round in
-    `perturbation_rounds`, the environment's optimal arm is swapped to the
-    corresponding entry in `perturbed_optima`. The algorithm is never reset.
-
-    `perturbed_optima[i]` is the new optimal arm to install AFTER round
-    perturbation_rounds[i] (i.e., it takes effect at round perturbation_rounds[i]+1).
-
-    Returns a list of per-round performance values (length total_rounds).
-    """
-    algorithm = algo_cls(config, initial_bias, total_rounds)
-    environment = TeamRewardEnvironment(optimal_arm, noise)
-
-    # Schedule the swaps: map round_num -> new_optimal_arm.
-    # round_num = perturbation_rounds[i] + 1 is when the new optimum takes effect.
-    swap_at = {pr + 1: perturbed_optima[i] for i, pr in enumerate(perturbation_rounds)}
-
-    performances = []
-    for round_num in range(1, total_rounds + 1):
-        if round_num in swap_at:
-            environment.optimal_arm = swap_at[round_num]
-
-        arms_chosen = algorithm.choose(round_num)
-        reward = environment.reward(arms_chosen)
-        algorithm.update(arms_chosen, reward)
-        correct = environment.evaluate_prediction(algorithm.predict_best())
-        performances.append(correct / config.n_bandits)
-    return performances
+def perturbation_chain(setting: Dict, n_events: int, p: int,
+                       settings_seed: int) -> List[List[int]]:
+    """The chain of optima for one setting. Each flip is applied to the
+    PREVIOUS optimum, so a later swap may revert an earlier dimension."""
+    rng = perturb_rng_for(settings_seed, setting["setting_id"])
+    p_eff = min(p, setting["n_bandits"])
+    chain, current = [], list(setting["optimal_arm"])
+    for _ in range(n_events):
+        current = make_perturbed_optimal(current, setting["arm_counts"], p_eff, rng)
+        chain.append(current)
+    return chain
 
 
 def phase_for_round(round_num: int, perturbation_rounds: Tuple[int, ...]) -> str:
-    """Return 'pre' for rounds before the first perturbation, 'post1' for
-    rounds between the first and second perturbation, 'post2' for rounds
-    after the second, etc."""
     for i, pr in enumerate(perturbation_rounds):
         if round_num <= pr:
             return "pre" if i == 0 else f"post{i}"
     return f"post{len(perturbation_rounds)}"
 
 
-def run_perturbation_experiment(settings: PerturbationSettings,
-                                config=None,
-                                tests=None,
-                                verbose: bool = True) -> tuple:
-    """Full sweep. Returns (rows, summary_rows, config, tests)."""
-    settings.validate()
+# ── one run ──────────────────────────────────────────────────────────────────
 
-    # Seed once so all 6 algorithms (when run with the same seed) see the
-    # same problem, tests, and perturbation events. The per-algorithm
-    # perturbation draw uses a separate seeded RNG so the events are
-    # deterministic and decoupled from the algorithm's Thompson draws.
-    if settings.seed is not None:
-        random.seed(settings.seed)
-        np.random.seed(settings.seed)
-    perturb_rng = random.Random((settings.seed or 0) * 9973 + 1)
+def run_single_with_perturbations(algo_cls, config, initial_bias, optimal_arm,
+                                  total_rounds, noise, perturbation_rounds,
+                                  perturbed_optima, limiter=None, env_rng=None,
+                                  trace=None, row_base=None):
+    """One run, with the optimum swapped at the scheduled rounds.
 
-    algo_cls = get_algorithm(settings.algorithm)
+    The limiter is NOT reset at a perturbation: the budget is a property of the
+    world and does not know the optimum moved.
+    """
+    algorithm = algo_cls(config, initial_bias, total_rounds)
+    environment = TeamRewardEnvironment(optimal_arm, noise,
+                                        switch_limiter=limiter, rng=env_rng)
+    swap_at = {pr + 1: perturbed_optima[i] for i, pr in enumerate(perturbation_rounds)}
 
-    if config is None:
-        config = generate_problem(settings)
-    if tests is None:
-        tests = generate_tests(config.arm_counts, settings.n_tests)
-
-    if verbose:
-        print(f"Algorithm: {settings.algorithm}")
-        for i, (n, t) in enumerate(zip(config.arm_counts, config.bandit_types), 1):
-            print(f"  bandit_{i}: type={t}, arms={n}")
-        print(f"\nGenerated {len(tests)} tests (each = (initial_bias, optimal_arm)):")
-        for t in tests:
-            print(f"  Initial bias: {t[0]}, Optimal arm: {t[1]}")
-        print(
-            f"\nPerturbations: at rounds {list(settings.perturbation_rounds)}, "
-            f"flip {settings.p_perturb_dims} of {settings.n_bandits} dimensions of "
-            f"the hidden optimal arm. Algorithm state does NOT reset."
-        )
-
-    # Pre-compute the perturbed optimal arm chain for each test.
-    # perturbed_optima[test_idx][i] is the optimum that takes effect after
-    # perturbation_rounds[i]. Start from the original optimum and chain
-    # flips: each event flips p_perturb_dims dimensions of the PREVIOUS
-    # optimum, so two perturbations may hit the same dim (reverting it) or
-    # different dims.
-    perturbed_optima_per_test = []
-    for _, opt in tests:
-        chain = []
-        current = list(opt)
-        for _ in settings.perturbation_rounds:
-            new = make_perturbed_optimal(current, config.arm_counts,
-                                        settings.p_perturb_dims, perturb_rng)
-            chain.append(new)
-            current = new
-        perturbed_optima_per_test.append(chain)
-
+    detailed = trace is not None and trace.detailed
+    want_diag = trace is not None and trace.wants_diagnostics
+    row_base = row_base or {}
     rows = []
-    summary_rows = []
-    rowid = 0
-    run_id = 0
-    base_lo, base_hi = settings.baseline_window
-    for noise in settings.noise_levels:
-        for _ in range(settings.runs_per_test):
-            for test_idx, (initial_bias, optimal_arm) in enumerate(tests):
-                perturbed_chain = perturbed_optima_per_test[test_idx]
-                performances = run_single_with_perturbations(
-                    algo_cls, config, initial_bias[:], optimal_arm[:],
-                    settings.total_rounds, noise,
-                    settings.perturbation_rounds, perturbed_chain,
-                )
 
-                baseline = sum(performances[base_lo - 1:base_hi]) / (base_hi - base_lo + 1)
+    performances = []
+    played = list(initial_bias)
+    cum_changes = 0
+    optimum_version = 0
+    for round_num in range(1, total_rounds + 1):
+        if round_num in swap_at:
+            environment.optimal_arm = swap_at[round_num]
+            optimum_version += 1
+        requested = algorithm.choose(round_num)
+        prev = played
+        played = environment.apply_switch_limit(requested, prev, round_num)
+        algorithm.notify_played(played, requested)
+        reward = environment.reward(played)
+        algorithm.update(played, reward)
+        best = algorithm.predict_best()
+        correct = environment.evaluate_prediction(best)
+        perf = correct / config.n_bandits
+        performances.append(perf)
 
-                for round_num, perf in enumerate(performances, start=1):
-                    phase = phase_for_round(round_num, settings.perturbation_rounds)
-                    rows.append([rowid, run_id, noise, round_num, perf, phase, baseline])
-                    rowid += 1
+        if trace is None:
+            continue
+        row = dict(row_base)
+        row.update({"round": round_num, "performance": float(perf),
+                    "phase": phase_for_round(round_num, tuple(perturbation_rounds)),
+                    "optimum_version": optimum_version})
+        if detailed:
+            n_req = sum(1 for d in range(len(requested)) if requested[d] != prev[d])
+            n_played = sum(1 for d in range(len(played)) if played[d] != prev[d])
+            cum_changes += n_played
+            # Read what project() used; recomputing would redraw the
+            # randomized rounding and desynchronise the limiter's RNG.
+            row.update({
+                "requested_team": list(requested),
+                "played_team": list(played),
+                "n_requested_changes": n_req,
+                "n_played_changes": n_played,
+                "blocked_dims": [d for d in range(len(requested))
+                                 if requested[d] != prev[d] and played[d] == prev[d]],
+                "budget": (None if limiter is None or limiter.last_budget is None
+                           else float(limiter.last_budget)),
+                "allowance": (None if limiter is None or limiter.last_allowance is None
+                              else int(limiter.last_allowance)),
+                "reward": float(reward),
+                "predict_best": list(best),
+                "n_correct": int(correct),
+                "hamming_to_optimum": sum(1 for a, b in zip(played, environment.optimal_arm)
+                                          if a != b),
+                "cum_changes": cum_changes,
+            })
+        rows.append((row, algorithm.diagnostics() if want_diag else None))
 
-                summary = compute_recovery_summary(
-                    performances, baseline, settings.perturbation_rounds,
-                    settings.total_rounds, settings.n_bandits,
-                    settings.p_perturb_dims,
-                )
-                summary_rows.append([settings.algorithm, noise, run_id, baseline] + summary)
-                run_id += 1
-        if verbose:
-            print(f"noise={noise}: done")
-
-    return rows, summary_rows, config, tests
+    return performances, rows
 
 
-def compute_recovery_summary(performances: List[float], baseline: float,
-                             perturbation_rounds: Tuple[int, ...],
-                             total_rounds: int, n_bandits: int,
-                             p_perturb_dims: int) -> list:
-    """For each perturbation event, compute recovery metrics.
+def run_task(task):
+    """One (setting, noise) task. Top-level and picklable, for the pool."""
+    (algo_name, setting, chain, noise, total_rounds, perturbation_rounds,
+     master_seed, switch_limit, max_changes, baseline_window, run_id,
+     trace_level) = task
 
-    Returns a list of CSV-ready values, one entry per perturbation (in order):
-        [recovery_threshold_rounds_1, time_to_baseline_rounds_1, max_dip_1,
-         recovered_within_300_1_bool, ...]
+    seed = task_seed(master_seed, setting["setting_id"], noise)
+    algo_seed, env_rng, limiter_rng = derive_streams(seed)
+    seed_globals(algo_seed)
 
-    The recovery threshold is the achievable post-perturbation ceiling:
-    after k perturbation events (each flipping p_perturb_dims dimensions),
-    the best an algorithm can do is (n_bandits - k*p_perturb_dims)/n_bandits
-    of the original baseline. Using max(0.9, baseline) as the threshold is
-    wrong here because for 1 flip on 9 bandits the ceiling is 8/9 ≈ 0.889,
-    below 0.9 — recovery would be impossible to measure.
+    config = ProblemConfig(arm_counts=list(setting["arm_counts"]),
+                           bandit_types=list(setting["bandit_types"]))
+    limiter = SwitchLimiter(mode=switch_limit, max_changes=max_changes,
+                            total_rounds=total_rounds, rng=limiter_rng)
+
+    buf = tracing.TraceBuffer(level=trace_level,
+                              extra_fields=tracing.PERTURBATION_FIELDS)
+    row_base = {
+        "run_id": run_id,
+        "setting_id": setting["setting_id"],
+        "n_bandits": setting["n_bandits"],
+        "noise_level": float(noise),
+        "noise_pct": int(round(noise * 100)),
+    }
+
+    performances, rows = run_single_with_perturbations(
+        get_algorithm(algo_name), config, list(setting["initial_bias"]),
+        list(setting["optimal_arm"]), total_rounds, noise,
+        tuple(perturbation_rounds), chain, limiter=limiter, env_rng=env_rng,
+        trace=buf, row_base=row_base,
+    )
+
+    # The baseline is a property of the whole run, so it can only be filled in
+    # once every round is done.
+    lo, hi = baseline_window
+    baseline = sum(performances[lo - 1:hi]) / (hi - lo + 1)
+    for row, diag in rows:
+        row["baseline"] = baseline
+        buf.add(row, diag)
+
+    return task_id(setting["setting_id"], noise), buf.to_table()
+
+
+# ── recovery summary ─────────────────────────────────────────────────────────
+
+def compute_recovery_summary(performances, baseline, perturbation_rounds,
+                             total_rounds, n_bandits, p_perturb_dims):
+    """Recovery metrics for one run, one block of four values per event.
+
+    The threshold is the achievable post-perturbation ceiling: after k events
+    each flipping p dimensions, the best attainable is
+    (n_bandits - k*p)/n_bandits of the original baseline. `n_bandits` is the
+    RUN's own dimension count, which now varies between settings.
     """
     out = []
+    p_eff = min(p_perturb_dims, n_bandits)
     for i, pr in enumerate(perturbation_rounds):
         post_start = pr + 1
-        if i + 1 < len(perturbation_rounds):
-            post_end = perturbation_rounds[i + 1]   # stop before next perturbation
-        else:
-            post_end = total_rounds
-        # Achievable ceiling after i+1 perturbation events.
-        flips = (i + 1) * p_perturb_dims
-        ceiling_frac = max(0.0, (n_bandits - flips) / n_bandits)
+        post_end = (perturbation_rounds[i + 1]
+                    if i + 1 < len(perturbation_rounds) else total_rounds)
+        ceiling_frac = max(0.0, (n_bandits - (i + 1) * p_eff) / n_bandits)
         threshold = baseline * ceiling_frac
-        recovery_threshold = None
-        time_to_baseline = None
+        recovery_threshold = time_to_baseline = None
         max_dip = 0.0
         for t in range(post_start, post_end + 1):
             perf = performances[t - 1]
@@ -293,10 +359,8 @@ def compute_recovery_summary(performances: List[float], baseline: float,
                 recovery_threshold = t - pr
             if time_to_baseline is None and perf >= baseline:
                 time_to_baseline = t - pr
-            if t <= min(pr + 100, post_end):  # dip window: 100 rounds after perturbation
-                dip = 1.0 - perf
-                if dip > max_dip:
-                    max_dip = dip
+            if t <= min(pr + 100, post_end):
+                max_dip = max(max_dip, 1.0 - perf)
         out.extend([
             recovery_threshold if recovery_threshold is not None else float("nan"),
             time_to_baseline if time_to_baseline is not None else float("nan"),
@@ -306,117 +370,302 @@ def compute_recovery_summary(performances: List[float], baseline: float,
     return out
 
 
-def save_results(rows: List, settings: PerturbationSettings,
-                 base_dir: Optional[str] = None) -> str:
-    """Save per-algorithm full CSV (per-round performance with phase + baseline)."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    perturbs_str = "perturbs" + str(len(settings.perturbation_rounds))
-    rounds_str = "_t" + "_t".join(str(pr) for pr in settings.perturbation_rounds)
-    filename = (
-        f"{settings.algorithm}_perturbation_rounds{settings.total_rounds}"
-        f"_dims{settings.n_bandits}_tests{settings.n_tests}"
-        f"_{perturbs_str}{rounds_str}_{timestamp}.csv"
-    )
-    if base_dir is None:
-        base_dir = HERE
+def write_summary(results_path: str, summary_path: str,
+                  settings: PerturbationSettings, label: str) -> int:
+    """Per-run recovery metrics, computed from the assembled results table.
+
+    Each run uses its OWN `n_bandits` for the recovery ceiling, because
+    dimensions vary between settings under the 500-setting protocol.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    tbl = pq.read_table(results_path, columns=["run_id", "setting_id", "n_bandits",
+                                               "noise_level", "round", "performance",
+                                               "baseline"])
+    df = tbl.to_pandas().sort_values(["run_id", "round"])
+
+    recs = []
+    for rid, g in df.groupby("run_id", sort=True):
+        perfs = g["performance"].tolist()
+        nb = int(g["n_bandits"].iloc[0])
+        baseline = float(g["baseline"].iloc[0])
+        metrics = compute_recovery_summary(
+            perfs, baseline, settings.perturbation_rounds,
+            settings.total_rounds, nb, settings.p_perturb_dims)
+        rec = {"algorithm": label, "setting_id": int(g["setting_id"].iloc[0]),
+               "n_bandits": nb, "noise_level": float(g["noise_level"].iloc[0]),
+               "run_id": int(rid), "baseline": baseline}
+        for i in range(len(settings.perturbation_rounds)):
+            b = metrics[i * 4:(i + 1) * 4]
+            rec[f"recovery_threshold_rounds_{i+1}"] = b[0]
+            rec[f"time_to_baseline_rounds_{i+1}"] = b[1]
+            rec[f"max_dip_{i+1}"] = b[2]
+            rec[f"recovered_within_horizon_{i+1}"] = bool(b[3])
+        recs.append(rec)
+
+    # An explicit schema, not inference. Left to itself, pyarrow types each
+    # metric column from the values it happens to see: a perturbation whose
+    # recovery always succeeded gets int64, one with a NaN gets double. The
+    # schema would then differ between perturbation events and between
+    # algorithms, and concatenating summaries would fail or silently coerce.
+    fields = [pa.field("algorithm", pa.string()),
+              pa.field("setting_id", pa.int32()),
+              pa.field("n_bandits", pa.int8()),
+              pa.field("noise_level", pa.float64()),
+              pa.field("run_id", pa.int32()),
+              pa.field("baseline", pa.float64())]
+    for i in range(1, len(settings.perturbation_rounds) + 1):
+        fields += [pa.field(f"recovery_threshold_rounds_{i}", pa.float64()),
+                   pa.field(f"time_to_baseline_rounds_{i}", pa.float64()),
+                   pa.field(f"max_dip_{i}", pa.float64()),
+                   pa.field(f"recovered_within_horizon_{i}", pa.bool_())]
+    schema = pa.schema(fields)
+    out = pa.Table.from_pylist(recs, schema=schema)
+    tmp = summary_path + ".tmp"
+    pq.write_table(out, tmp, compression=tracing.COMPRESSION,
+                   compression_level=tracing.COMPRESSION_LEVEL)
+    os.replace(tmp, summary_path)
+    return len(recs)
+
+
+# ── the sweep ────────────────────────────────────────────────────────────────
+
+def output_paths(settings: PerturbationSettings, base_dir: Optional[str] = None):
+    base_dir = base_dir or HERE
     save_dir = os.path.join(base_dir, settings.output_dir)
     os.makedirs(save_dir, exist_ok=True)
-    file_path = os.path.join(save_dir, filename)
-
-    with open(file_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["rowid", "runID", "noise_level", "round",
-                         "performance", "phase", "baseline"])
-        writer.writerows(rows)
-    return file_path
-
-
-def save_summary(summary_rows: List, settings: PerturbationSettings,
-                 base_dir: Optional[str] = None) -> str:
-    """Save per-algorithm summary CSV (recovery metrics per perturbation)."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    perturbs_str = "perturbs" + str(len(settings.perturbation_rounds))
     rounds_str = "_t" + "_t".join(str(pr) for pr in settings.perturbation_rounds)
-    filename = (
-        f"{settings.algorithm}_perturbation_summary_rounds{settings.total_rounds}"
-        f"_dims{settings.n_bandits}_tests{settings.n_tests}"
-        f"_{perturbs_str}{rounds_str}_{timestamp}.csv"
-    )
-    if base_dir is None:
-        base_dir = HERE
-    save_dir = os.path.join(base_dir, settings.output_dir)
-    os.makedirs(save_dir, exist_ok=True)
-    file_path = os.path.join(save_dir, filename)
-
-    # Build header dynamically: one block of 4 cols per perturbation.
-    header = ["algorithm", "noise_level", "runID", "baseline"]
-    for i, pr in enumerate(settings.perturbation_rounds, start=1):
-        header += [
-            f"recovery_threshold_rounds_{i}",
-            f"time_to_baseline_rounds_{i}",
-            f"max_dip_{i}",
-            f"recovered_within_300_{i}",
-        ]
-
-    with open(file_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(header)
-        for row in summary_rows:
-            out = list(row)
-            # Format NaN as empty string for CSV friendliness.
-            for j in range(4, len(out)):
-                if isinstance(out[j], float) and math.isnan(out[j]):
-                    out[j] = ""
-            writer.writerow(out)
-    return file_path
+    stem = (f"{settings.algorithm}_limit-{settings.limit_tag()}"
+            f"_perturbation_rounds{settings.total_rounds}"
+            f"_settings{settings.n_settings}"
+            f"_perturbs{len(settings.perturbation_rounds)}{rounds_str}"
+            f"_seed{settings.seed}")
+    return {
+        "results": os.path.join(save_dir, stem + ".parquet"),
+        "trace": os.path.join(save_dir, stem + "_trace.parquet"),
+        "summary": os.path.join(save_dir, stem + "_summary.parquet"),
+        "manifest": os.path.join(save_dir, stem + "_manifest.json"),
+        "parts": os.path.join(save_dir, stem + "_parts"),
+        "stem": stem,
+    }
 
 
-def parse_args() -> PerturbationSettings:
-    parser = argparse.ArgumentParser(
-        description="300-round unconstrained perturbation experiment (non-stationary bandit)"
-    )
-    parser.add_argument("--algorithm", default=None, choices=sorted(ALGORITHMS),
-                        help="which recommendation algorithm to run (default: dreamteam)")
-    parser.add_argument("--bandits", type=int, default=9,
-                        help="number of bandits (must be divisible by 3)")
-    parser.add_argument("--rounds", type=int, default=300,
-                        help="total rounds per run")
-    parser.add_argument("--perturbation_rounds", type=int, nargs="+",
-                        default=list(DEFAULT_PERTURBATION_ROUNDS),
-                        help="rounds AFTER which the optimal arm is swapped "
-                             "(default: 101 201)")
-    parser.add_argument("--p_perturb_dims", type=int, default=DEFAULT_PERTURB_DIMS,
-                        help="number of dimensions whose optimal arm is flipped at each perturbation")
-    parser.add_argument("--tests", type=int, default=9, help="number of random test scenarios")
-    parser.add_argument("--runs", type=int, default=20, help="repetitions per test per noise level")
-    parser.add_argument("--noise", type=float, nargs="+", default=None,
-                        help="noise levels to sweep (default: 0.0 0.2 0.4 0.6 0.8 1.0)")
-    parser.add_argument("--seed", type=int, default=None, help="random seed for reproducibility")
-    args = parser.parse_args()
+def run_perturbation_experiment(settings: PerturbationSettings,
+                                base_dir: Optional[str] = None,
+                                verbose: bool = True):
+    settings.validate()
+    base_dir = base_dir or HERE
+    started = time.time()
 
-    settings = PerturbationSettings(
-        algorithm=args.algorithm or "dreamteam",
-        n_bandits=args.bandits,
-        total_rounds=args.rounds,
-        perturbation_rounds=tuple(args.perturbation_rounds),
-        p_perturb_dims=args.p_perturb_dims,
-        n_tests=args.tests,
-        runs_per_test=args.runs,
-        seed=args.seed,
-    )
-    if args.noise is not None:
-        settings.noise_levels = args.noise
-    return settings
+    doc = sampling.ensure_settings(base_dir, seed=settings.settings_seed,
+                                   n_settings=settings.n_settings,
+                                   path=settings.settings_path)
+    problem_settings = doc["settings"]
+
+    smallest = min(s["n_bandits"] for s in problem_settings)
+    if settings.p_perturb_dims > smallest and verbose:
+        print(f"  note: --p_perturb_dims {settings.p_perturb_dims} exceeds the "
+              f"smallest setting's {smallest} dimensions; it is clamped per "
+              f"setting to that setting's dimension count.")
+
+    paths = output_paths(settings, base_dir)
+
+    tasks, run_id = [], 0
+    n_events = len(settings.perturbation_rounds)
+    for noise in settings.noise_levels:
+        for ps in problem_settings:
+            chain = perturbation_chain(ps, n_events, settings.p_perturb_dims,
+                                       settings.settings_seed)
+            tasks.append((settings.algorithm, ps, chain, noise, settings.total_rounds,
+                          settings.perturbation_rounds, settings.seed,
+                          settings.switch_limit, settings.max_changes,
+                          settings.baseline_window, run_id, settings.trace))
+            run_id += 1
+    total = len(tasks)
+
+    # Expected task ids for THIS configuration. A checkpoint may also hold ids
+    # from a different one (n_settings or the noise list changed between runs);
+    # intersecting means those are ignored and dropped rather than counted
+    # towards completion, which would otherwise leave the run never finishing.
+    expected = {task_id(t[1]["setting_id"], t[3]) for t in tasks}
+
+    checkpoint = Checkpoint(paths["parts"], settings.total_rounds)
+    checkpoint.sweep()                       # clear .tmp files from a hard kill
+    if not settings.resume:
+        checkpoint.discard()
+        checkpoint = Checkpoint(paths["parts"], settings.total_rounds)
+        done = set()
+    else:
+        done = checkpoint.completed() & expected
+
+    remaining = [t for t in tasks if task_id(t[1]["setting_id"], t[3]) not in done]
+    n_cores = parallel.resolve_n_cores(settings.n_cores)
+
+    if verbose:
+        print(f"Algorithm:      {settings.algorithm}")
+        print(f"Settings file:  {os.path.basename(doc['path'])}")
+        print(f"                digest {doc['digest'][:16]}...  "
+              f"({doc['n_settings']} settings, seed {doc['seed']})")
+        print(f"Perturbations:  after rounds {list(settings.perturbation_rounds)}, "
+              f"flipping {settings.p_perturb_dims} dimension(s); state never reset")
+        print(settings.make_limiter().describe())
+        print(f"Trace level:    {settings.trace}")
+        print(f"Noise levels:   {settings.noise_levels}")
+        print(f"Rounds per run: {settings.total_rounds}")
+        print(f"Total runs:     {total}")
+        print(f"Cores:          {n_cores}")
+        if done:
+            print(f"Resuming:       {len(done)} of {total} runs already done, "
+                  f"{len(remaining)} to go")
+        if not parallel.HAVE_TQDM:
+            print("  (tqdm not installed -- no progress bar; pip install tqdm)")
+        print()
+
+    interrupted = False
+    if remaining:
+        with checkpoint:
+            _, interrupted = parallel.run_tasks(
+                run_task, remaining, checkpoint, n_cores,
+                desc=f"{settings.algorithm}/{settings.limit_tag()}",
+                already_done=len(done), total=total)
+
+    finished = checkpoint.completed() & expected
+    complete = finished >= expected
+    result = {"algorithm": settings.algorithm, "total_tasks": total,
+              "completed_tasks": len(finished), "complete": complete,
+              "interrupted": interrupted, "settings_digest": doc["digest"],
+              **paths}
+
+    if complete:
+        detailed = settings.trace != tracing.TRACE_OFF
+        target = paths["trace"] if detailed else paths["results"]
+        n_rows = checkpoint.compact(target, keep=expected)
+        if detailed:
+            tracing.derive_results(paths["trace"], paths["results"],
+                                   columns=tracing.PERTURBATION_RESULTS_COLUMNS)
+        label = (settings.algorithm if settings.limit_tag() == "none"
+                 else f"{settings.algorithm} [{settings.limit_tag()}]")
+        n_runs = write_summary(paths["results"], paths["summary"], settings, label)
+        tracing.write_manifest(paths["manifest"], {
+            "algorithm": settings.algorithm,
+            "total_rounds": settings.total_rounds,
+            "perturbation_rounds": list(settings.perturbation_rounds),
+            "p_perturb_dims": settings.p_perturb_dims,
+            "baseline_window": list(settings.baseline_window),
+            "noise_levels": settings.noise_levels,
+            "n_settings": settings.n_settings,
+            "master_seed": settings.seed,
+            "settings_seed": doc["seed"],
+            "settings_digest": doc["digest"],
+            "switch_limit": settings.switch_limit,
+            "max_changes": settings.max_changes,
+            "trace_level": settings.trace,
+            "n_runs": total, "n_trace_rows": n_rows, "n_cores": n_cores,
+            "wall_seconds": round(time.time() - started, 1),
+        })
+        result.update(rows=n_rows, n_run_summaries=n_runs)
+        checkpoint.discard()
+        if verbose:
+            print(f"\nComplete in {time.time()-started:.0f}s.")
+            if detailed:
+                print(f"  trace    {n_rows:,} rows -> {os.path.basename(paths['trace'])} "
+                      f"({os.path.getsize(paths['trace'])/1e6:.1f} MB)")
+            print(f"  results  -> {os.path.basename(paths['results'])}")
+            print(f"  summary  {n_runs} runs -> {os.path.basename(paths['summary'])}")
+            print(f"  manifest -> {os.path.basename(paths['manifest'])}")
+    elif verbose:
+        print(f"\nStopped with {len(finished)} of {total} runs done.")
+        print(f"Progress saved in {os.path.basename(paths['parts'])}/ — "
+              f"rerun the same command to resume.")
+    return result
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="Non-stationary perturbation sweep (500-setting protocol)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    p.add_argument("--algorithm", default=None, choices=sorted(ALGORITHMS))
+    p.add_argument("--all", action="store_true",
+                   help="run every registered algorithm, one after another")
+    p.add_argument("--rounds", type=int, default=300)
+    p.add_argument("--perturbation_rounds", type=int, nargs="+",
+                   default=list(DEFAULT_PERTURBATION_ROUNDS),
+                   help="rounds AFTER which the optimal arm is swapped")
+    p.add_argument("--p_perturb_dims", type=int, default=DEFAULT_PERTURB_DIMS,
+                   help="dimensions flipped at each perturbation (clamped per "
+                        "setting to that setting's dimension count)")
+    p.add_argument("--baseline-window", dest="baseline_window", type=int, nargs=2,
+                   default=[80, 100], metavar=("LO", "HI"),
+                   help="inclusive round window for each run's pre-perturbation baseline")
+    p.add_argument("--noise", type=float, nargs="+", default=None)
+    p.add_argument("--seed", type=int, default=42,
+                   help="master seed for per-run RNG streams")
+    p.add_argument("--settings-seed", type=int, default=sampling.DEFAULT_SETTINGS_SEED)
+    p.add_argument("--n-settings", type=int, default=sampling.N_SETTINGS)
+    p.add_argument("--settings-path", default=None)
+    p.add_argument("--switch-limit", dest="switch_limit", default=NO_LIMIT,
+                   choices=list(SWITCH_LIMIT_MODES),
+                   help="cap on role changes per round; prefer 'flat' for recovery "
+                        "work (see the module docstring)")
+    p.add_argument("--max-changes", dest="max_changes", type=float,
+                   default=DEFAULT_MAX_CHANGES)
+    p.add_argument("--n-cores", dest="n_cores", type=int, default=None,
+                   help="worker processes (default: all cores but one)")
+    p.add_argument("--no-resume", dest="resume", action="store_false")
+    p.add_argument("--trace", default=tracing.DEFAULT_TRACE_LEVEL,
+                   choices=list(tracing.TRACE_LEVELS),
+                   help="per-round detail to record: 'off' keeps only the "
+                        "results columns, 'basic' adds the teams and the "
+                        "constraint's effect, 'full' adds algorithm internals")
+    p.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
+    return p.parse_args()
 
 
 def main():
-    settings = parse_args()
-    rows, summary_rows, config, tests = run_perturbation_experiment(settings)
-    full_path = save_results(rows, settings)
-    summary_path = save_summary(summary_rows, settings)
-    print(f"\nSaved {len(rows)} per-round rows to {full_path}")
-    print(f"Saved {len(summary_rows)} per-run summary rows to {summary_path}")
+    args = parse_args()
+    if not args.algorithm and not args.all:
+        print("Pick an algorithm with --algorithm NAME, or --all for every one.\n")
+        print("Available: " + ", ".join(sorted(ALGORITHMS)))
+        return 2
+
+    parallel.limit_blas_threads(parallel.resolve_n_cores(args.n_cores))
+    algos = sorted(ALGORITHMS) if args.all else [args.algorithm]
+    results = []
+    for i, algo in enumerate(algos, start=1):
+        if len(algos) > 1:
+            print("=" * 62)
+            print(f"[{i}/{len(algos)}] {algo}")
+            print("=" * 62)
+        s = PerturbationSettings(
+            algorithm=algo, total_rounds=args.rounds,
+            perturbation_rounds=tuple(args.perturbation_rounds),
+            p_perturb_dims=args.p_perturb_dims,
+            baseline_window=tuple(args.baseline_window),
+            seed=args.seed, settings_seed=args.settings_seed,
+            n_settings=args.n_settings, settings_path=args.settings_path,
+            switch_limit=args.switch_limit, max_changes=args.max_changes,
+            n_cores=args.n_cores, resume=args.resume, output_dir=args.output_dir,
+            trace=args.trace)
+        if args.noise is not None:
+            s.noise_levels = args.noise
+        r = run_perturbation_experiment(s)
+        results.append(r)
+        if r["interrupted"]:
+            print("\nInterrupted. Rerun the same command to resume.")
+            break
+        print()
+
+    if len(results) > 1:
+        done = sum(1 for r in results if r["complete"])
+        print("=" * 62)
+        print(f"{done} of {len(results)} algorithms complete.")
+        if done < len(results):
+            print("Rerun the same command to finish the rest.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

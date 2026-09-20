@@ -32,49 +32,107 @@ import re
 import statistics
 from collections import defaultdict
 from datetime import datetime
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
 # Filename pattern from run_perturbation_experiment.py:
-#   {algo}_perturbation_rounds300_dims9_tests9_perturbs2_t101_t201_<ts>.csv
+#   {algo}_limit-{mode}_perturbation_rounds300_dims9_tests9_perturbs2_t101_t201_<ts>.csv
+#
+# The `_limit-<mode>` segment records the switching limit the run was made
+# under ('none', 'flat2', 'parabolic2', ...). It is OPTIONAL in this pattern so
+# that CSVs produced before the switching limit existed still parse; those are
+# treated as 'none'.
+#
+# Note the separator has to be a hyphen: the algo group is `[a-z_]+`, so an
+# underscore-joined tag would either be swallowed by the algo group or, once it
+# contains a digit, fail to match at all — which would silently drop the file
+# from every aggregation.
 FILENAME_RE = re.compile(
-    r"^(?P<algo>[a-z_]+)_perturbation_rounds(?P<rounds>\d+)_dims(?P<dims>\d+)"
-    r"_tests(?P<tests>\d+)_perturbs(?P<perturbs>\d+)"
-    r"(?P<round_str>(?:_t\d+)+)_(?P<ts>\d{8}_\d{6})\.csv$"
+    r"^(?P<algo>[a-z_]+?)(?:_limit-(?P<limit>[a-z0-9p]+))?"
+    r"_perturbation_rounds(?P<rounds>\d+)"
+    # Either the 500-setting protocol (_settingsN) or the older
+    # _dimsD_testsT naming, so results from both still parse.
+    r"(?:_settings(?P<settings>\d+)|_dims(?P<dims>\d+)_tests(?P<tests>\d+))"
+    r"_perturbs(?P<perturbs>\d+)"
+    r"(?P<round_str>(?:_t\d+)+)"
+    r"(?:_seed(?P<seed>\d+))?(?:_(?P<ts>\d{8}_\d{6}))?"
+    # Results are Parquet now; .csv still matches so older runs keep working.
+    r"\.(?P<ext>parquet|csv)$"
 )
+
+
+def condition_label(algo: str, limit: str) -> str:
+    """Display name for one (algorithm, switching-limit) condition."""
+    if not limit or limit == "none":
+        return algo
+    return f"{algo} [{limit}]"
 
 # Pull the perturbation rounds out of the trailing _tNNN_tNNN_... segment.
 ROUNDS_RE = re.compile(r"_t(\d+)")
 
 
+def _candidate_files(results_dir: str):
+    """Per-round result files: Parquet first, CSV kept for older runs."""
+    out = []
+    for ext in ("parquet", "csv"):
+        out.extend(glob.glob(os.path.join(results_dir, f"*_perturbation_rounds*.{ext}")))
+    return out
+
+
+def _is_derived(path: str) -> bool:
+    """Skip files that are summaries or traces rather than per-round results."""
+    b = os.path.basename(path)
+    return ("_perturbation_summary_" in b or b.endswith("_summary.csv")
+            or b.endswith("_summary.parquet") or b.endswith("_trace.parquet"))
+
+
+def _read_rows(path: str):
+    """Read a per-round results file as a list of dicts, Parquet or CSV."""
+    if path.endswith(".parquet"):
+        import pyarrow.parquet as pq
+        return pq.read_table(path).to_pylist()
+    with open(path, "r") as f:
+        return list(csv.DictReader(f))
+
+
 def discover_files(results_dir: str):
-    """Return list of (algorithm, full_csv_path, perturbation_rounds, n_bandits,
+    """Return list of (label, full_csv_path, perturbation_rounds, n_bandits,
     p_perturb_dims). Uses the most recent timestamp if multiple files exist
-    for the same algorithm."""
+    for the same condition.
+
+    Results are keyed by (algorithm, switching limit), not by algorithm alone,
+    so the constrained and unconstrained runs of the same algorithm appear as
+    separate rows instead of one silently shadowing the other."""
     files_by_algo = defaultdict(list)
-    for path in glob.glob(os.path.join(results_dir, "*_perturbation_rounds*.csv")):
-        if "_perturbation_summary_" in path:
+    for path in _candidate_files(results_dir):
+        if _is_derived(path):
             continue
         basename = os.path.basename(path)
         m = FILENAME_RE.match(basename)
         if not m:
             continue
         algo = m.group("algo")
-        ts = m.group("ts")
-        n_bandits = int(m.group("dims"))
+        limit = m.group("limit") or "none"
+        ts = m.group("ts") or ""
+        # Under the 500-setting protocol dimensions vary per setting, so the
+        # filename carries no single dims value; each ROW carries its own and
+        # aggregate_one uses that. Older filenames still supply one here as a
+        # fallback.
+        dims = m.group("dims")
+        n_bandits = int(dims) if dims else None
         rounds = [int(x) for x in ROUNDS_RE.findall(m.group("round_str"))]
         n_perturbs = int(m.group("perturbs"))
         # p_perturb_dims is encoded in the filename as the count of _tNNN
         # segments = n_perturbs. To recover p_perturb_dims we don't have it
         # directly; default to 1 (the experiment's documented default).
         p_perturb_dims = 1
-        files_by_algo[algo].append(
+        files_by_algo[condition_label(algo, limit)].append(
             (ts, path, rounds, n_bandits, p_perturb_dims, n_perturbs))
     out = []
-    for algo, lst in files_by_algo.items():
+    for label, lst in files_by_algo.items():
         lst.sort()
         ts, path, rounds, n_bandits, p_perturb_dims, n_perturbs = lst[-1]
-        out.append((algo, path, rounds, n_bandits, p_perturb_dims))
+        out.append((label, path, rounds, n_bandits, p_perturb_dims))
     return sorted(out)
 
 
@@ -124,15 +182,18 @@ def compute_recovery_for_runs(perfs: List[float], baseline: float,
 
 def aggregate_one(path: str, perturbation_rounds: List[int],
                   total_rounds: int, n_bandits: int,
-                  p_perturb_dims: int) -> List[dict]:
+                  p_perturb_dims: int, label: Optional[str] = None) -> List[dict]:
     """Read one per-algorithm CSV, return per-(noise_level, runID) rows with
     the recovery metrics added (one block per perturbation)."""
     rows = []
-    with open(path, "r") as f:
-        reader = csv.DictReader(f)
-        for r in reader:
-            rows.append({
-                "runID": int(r["runID"]),
+    for r in _read_rows(path):
+        rows.append({
+                # the 500-setting protocol renamed runID -> run_id
+                "runID": int(r.get("run_id", r.get("runID"))),
+                # Dimensions vary per setting under the 500-setting protocol,
+                # so each row carries its own. Older CSVs without the column
+                # fall back to the count parsed from the filename.
+                "n_bandits": int(r["n_bandits"]) if r.get("n_bandits") else None,
                 "noise_level": float(r["noise_level"]),
                 "round": int(r["round"]),
                 "performance": float(r["performance"]),
@@ -150,11 +211,24 @@ def aggregate_one(path: str, perturbation_rounds: List[int],
             runs = sorted(by_run[run_id], key=lambda r: r["round"])
             perfs = [r["performance"] for r in runs]
             baseline = sum(perfs[base_lo - 1:base_hi]) / (base_hi - base_lo + 1)
+            row_nb = next((x["n_bandits"] for x in runs if x["n_bandits"]), None)
+            nb = row_nb or n_bandits
+            if nb is None:
+                raise ValueError(
+                    f"{os.path.basename(path)}: no n_bandits column in the CSV and "
+                    f"none in the filename; cannot compute the recovery ceiling")
             metrics = compute_recovery_for_runs(perfs, baseline,
                                                 perturbation_rounds, total_rounds,
-                                                n_bandits, p_perturb_dims)
+                                                nb, p_perturb_dims)
             row = {
-                "algorithm": os.path.basename(path).split("_")[0],
+                # `label` comes from the parsed filename. Deriving it here with
+                # basename.split("_")[0] was wrong for any algorithm whose name
+                # contains an underscore -- `bocs_hs` came out as `bocs`,
+                # `combo_slice` as `combo`, `glm_fpl` as `glm`, and
+                # `gp_onehot`/`gp_nei`/`gp_ucb`/`gp_ts` all as `gp` -- so eight
+                # of the 26 arms were mislabelled.
+                "algorithm": label or os.path.basename(path).split("_")[0],
+                "n_bandits": row_nb,
                 "noise_level": noise,
                 "runID": run_id,
                 "baseline": baseline,
@@ -278,16 +352,21 @@ def main():
         raise SystemExit(f"no per-algorithm CSVs found in {args.results_dir}")
     # All files should share the same perturbation pattern; use the first.
     algo0, path0, perturbation_rounds, n_bandits, _ = files[0]
-    print(f"Found {len(files)} algorithms; perturbation rounds = {perturbation_rounds}")
-    print(f"  Using n_bandits={n_bandits}, p_perturb_dims={args.p_perturb_dims}")
-    for algo, path, _r, _n, _p in files:
-        print(f"  {algo}: {os.path.basename(path)}")
+    print(f"Found {len(files)} algorithm/switch-limit conditions; "
+          f"perturbation rounds = {perturbation_rounds}")
+    if n_bandits is None:
+        print(f"  n_bandits: per-setting (read from each row), "
+              f"p_perturb_dims={args.p_perturb_dims}")
+    else:
+        print(f"  Using n_bandits={n_bandits}, p_perturb_dims={args.p_perturb_dims}")
+    for label, path, _r, _n, _p in files:
+        print(f"  {label}: {os.path.basename(path)}")
 
     per_algo = {}
-    for algo, path, rounds, nb, _p in files:
-        per_algo[algo] = aggregate_one(path, rounds, args.total_rounds,
-                                       nb, args.p_perturb_dims)
-        print(f"  aggregated {algo}: {len(per_algo[algo])} (noise, runID) rows")
+    for label, path, rounds, nb, _p in files:
+        per_algo[label] = aggregate_one(path, rounds, args.total_rounds,
+                                        nb, args.p_perturb_dims, label=label)
+        print(f"  aggregated {label}: {len(per_algo[label])} (noise, runID) rows")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_path, md_path = write_cross_summary(per_algo, perturbation_rounds,

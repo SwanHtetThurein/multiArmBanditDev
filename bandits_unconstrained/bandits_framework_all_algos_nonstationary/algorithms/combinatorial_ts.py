@@ -95,6 +95,21 @@ class CombinatorialTS(RecommendationAlgorithm):
             else:
                 self.beta[d][a] += 1.0
 
+    def diagnostics(self) -> dict:
+        """Beta posteriors over base arms. Total evidence mass says how much
+        the posteriors have actually moved off their Beta(1,1) prior."""
+        means = [a / (a + b) for ra, rb in zip(self.alpha, self.beta)
+                 for a, b in zip(ra, rb)]
+        mass = sum(a + b for ra, rb in zip(self.alpha, self.beta)
+                   for a, b in zip(ra, rb))
+        return {
+            "t": int(self.t), "n_base_arms": len(means),
+            "total_evidence": float(mass),
+            "mean_posterior": float(sum(means) / len(means)) if means else None,
+            "max_posterior": float(max(means)) if means else None,
+            "min_posterior": float(min(means)) if means else None,
+        }
+
     def predict_best(self) -> List[int]:
         if self.t == 0:
             return list(self.initial_bias)

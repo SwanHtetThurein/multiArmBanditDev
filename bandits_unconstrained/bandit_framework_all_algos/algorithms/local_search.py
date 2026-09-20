@@ -119,6 +119,17 @@ class ObliviousLocalSearch(RecommendationAlgorithm):
                 self.incumbent_score = None
                 self._phase = "eval_incumbent"
 
+    def diagnostics(self) -> dict:
+        """Where the neighbourhood sweep has got to, and the incumbent."""
+        return {
+            "phase": str(self._phase),
+            "incumbent_score": (float(self.incumbent_score)
+                                if self.incumbent_score is not None else None),
+            "queue_remaining": len(self._queue),
+            "best_neighbor_score": (float(self._best_neighbor_score)
+                                    if self._best_neighbor_score is not None else None),
+        }
+
     def predict_best(self) -> List[int]:
         if not self._stats:
             return list(self.initial_bias)

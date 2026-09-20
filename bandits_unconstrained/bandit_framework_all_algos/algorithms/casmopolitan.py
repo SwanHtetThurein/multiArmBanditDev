@@ -302,6 +302,20 @@ class Casmopolitan(RecommendationAlgorithm):
             self._refresh(tune=tune)
             self._update_region(float(reward))
 
+    def diagnostics(self) -> dict:
+        """Trust-region state -- the whole point of this arm.
+
+        `L` is the Hamming radius currently trusted; `succ`/`fail` are the
+        counters that grow and shrink it. A run where L keeps collapsing to
+        L_MIN is one where the model never earned the right to be trusted.
+        """
+        out = {"n_obs": len(self.y), "trust_radius": float(self.L),
+               "succ_count": int(self._succ), "fail_count": int(self._fail),
+               "rho": float(self.rho), "eta": float(self.eta),
+               "sf2": float(self.sf2),
+               "best_y": (float(self._best_y) if self._best_y is not None else None)}
+        return out
+
     def predict_best(self) -> List[int]:
         if self._chol is None or len(self.y) <= self.N_INIT:
             return (list(self.X_teams[int(np.argmax(self.y))])

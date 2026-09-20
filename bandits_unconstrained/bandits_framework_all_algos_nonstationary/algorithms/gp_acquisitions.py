@@ -238,6 +238,18 @@ class _OneHotGP(RecommendationAlgorithm):
                 self._rounds_since_tune = 0
             self._refresh(tune=tune)
 
+    def diagnostics(self) -> dict:
+        """Fitted kernel hyperparameters. `rho` is the Hamming length-scale --
+        how far the model believes similarity reaches -- and `eta` the noise
+        level it has settled on. Both moving is the model changing its mind."""
+        out = {"n_obs": len(self.y), "rho": float(self.rho),
+               "eta": float(self.eta), "sf2": float(self.sf2),
+               "rounds_since_tune": int(self._rounds_since_tune)}
+        if self.y:
+            out["best_y"] = float(max(self.y))
+            out["ymean"] = float(self._ymean)
+        return out
+
     def predict_best(self) -> List[int]:
         if self._chol is None or len(self.y) <= self.N_INIT:
             return (list(self.X_teams[int(np.argmax(self.y))])

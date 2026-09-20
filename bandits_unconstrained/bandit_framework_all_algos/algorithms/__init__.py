@@ -14,13 +14,14 @@ comparisons:
 
   reference points
     random          uniform random every round; performance floor
-    dreamteam       this project's modified algorithm (per-bandit Thompson
-                    sampling + type-scheduled stickiness + global switch budget,
-                    with the 0.1 threshold / +1000 beta penalty update)
-    dreamteam_orig  DreamTeam exactly as published (Zhou, Valentine & Bernstein,
-                    CHI 2018): standard Beta update and equal-share global
-                    constraint. Run against `dreamteam` to measure what this
-                    project's modifications changed.
+    dreamteam       DreamTeam as published (Zhou, Valentine & Bernstein,
+                    CHI 2018): per-arm Beta(1,1) posteriors, Thompson sampling,
+                    the standard alpha += r / beta += 1 - r update, and
+                    probabilistic selection. Its global switching budget now
+                    lives in environment.SwitchLimiter, applied to every
+                    algorithm equally; its early/late temporal schedule is
+                    inactive because every dimension in this benchmark is
+                    'ongoing'.
 
   model-free combinatorial search  (baselines in BOCS / COMBO)
     sa            simulated annealing with a geometric cooling schedule
@@ -79,7 +80,6 @@ from .base import RecommendationAlgorithm, ProblemConfig
 
 # reference points
 from .dreamteam import DreamTeamAlgorithm
-from .dreamteam_original import DreamTeamOriginal
 from .random_baseline import RandomBaseline
 
 # model-free combinatorial search
@@ -122,7 +122,6 @@ from .combinatorial_ts import CombinatorialTS
 
 ALGORITHMS = {
     DreamTeamAlgorithm.name: DreamTeamAlgorithm,
-    DreamTeamOriginal.name: DreamTeamOriginal,
     RandomBaseline.name: RandomBaseline,
 
     SimulatedAnnealing.name: SimulatedAnnealing,
