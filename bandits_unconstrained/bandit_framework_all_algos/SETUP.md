@@ -3,7 +3,8 @@
 Everything here is plain Python. There is no build step and no configuration
 file to edit.
 
-> This file is the quickstart. Two companion references go deeper:
+> This file is the quickstart. Three companion references go deeper:
+> **`REQUIREMENTS.md`** covers what to install and the hardware needed,
 > **`INPUTS.md`** documents every flag and setting, and **`OUTPUTS.md`**
 > documents every output file and every column.
 

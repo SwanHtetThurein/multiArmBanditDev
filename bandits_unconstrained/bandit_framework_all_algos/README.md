@@ -9,8 +9,9 @@ test cases come from a shared 500-setting sampling protocol.
 stop and resume, and what is guaranteed. `python3 verify_setup.py` checks all
 of it in under a minute.
 
-Then, as reference: **`INPUTS.md`** for every flag and setting, and
-**`OUTPUTS.md`** for every output file and what each column means.
+Then, as reference: **`REQUIREMENTS.md`** for dependencies and hardware,
+**`INPUTS.md`** for every flag and setting, and **`OUTPUTS.md`** for every
+output file and what each column means.
 
 ## The sampling protocol
 
@@ -69,6 +70,7 @@ variance.
 bandit_framework/
 ├── run_experiment.py        # entry point (interactive or CLI flags)
 ├── SETUP.md                 # how to run it (start here)
+├── REQUIREMENTS.md          # dependencies, versions, hardware
 ├── INPUTS.md                # every flag and setting, explained
 ├── OUTPUTS.md               # every output file and column, explained
 ├── verify_setup.py          # self-check: deps, settings, determinism, resume

@@ -7,8 +7,9 @@ The full algorithm suite from `bandit_framework_all_algos`, run under the
 stop and resume, and what is guaranteed. `python3 verify_setup.py` checks all
 of it in under a minute.
 
-Then, as reference: **`INPUTS.md`** for every flag and setting, and
-**`OUTPUTS.md`** for every output file and what each column means.
+Then, as reference: **`REQUIREMENTS.md`** for dependencies and hardware,
+**`INPUTS.md`** for every flag and setting, and **`OUTPUTS.md`** for every
+output file and what each column means.
 
 The difference from the stationary folder is one thing only: **the hidden
 optimal team changes partway through each run**, and the algorithm is never
@@ -305,6 +306,7 @@ tracing.py                       per-round Parquet trace: schema, writer, reader
 parallel.py                      worker pool, tqdm, checkpoint/resume
 verify_setup.py                  self-check: deps, settings, determinism, resume
 SETUP.md                         how to run it (start here)
+REQUIREMENTS.md                  dependencies, versions, hardware
 INPUTS.md                        every flag and setting, explained
 OUTPUTS.md                       every output file and column, explained
 algorithms/                      all 26 plug-ins (identical to the stationary folder)
