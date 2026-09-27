@@ -1,8 +1,14 @@
 # REQUIREMENTS — what to install, and what breaks without it (non-stationary)
 
 Everything here is plain Python. There is no build step, no compiler, no
-database, no configuration file to edit, and nothing to run as a service. Clone
-the folder, install the libraries below, and run it.
+database, no configuration file to edit, and nothing to run as a service. Copy
+the folder anywhere, install the libraries below, and run it.
+
+**The folder is self-contained.** It does not need to sit in any particular
+directory, and it does not need a parent folder with a particular name. Unzip
+it wherever you like — `D:\work\`, `~/projects/`, a scratch directory on a
+cluster — and run the commands from inside it. Nothing outside the folder is
+referenced.
 
 Contents: [quick install](#quick-install) · [the libraries](#the-libraries) ·
 [Python version](#python-version) · [hardware](#hardware) ·
@@ -216,6 +222,41 @@ pip install numpy scipy pyarrow tqdm pandas matplotlib
 conda create -n bandits python=3.11 numpy scipy pyarrow pandas matplotlib tqdm -c conda-forge
 conda activate bandits
 ```
+
+---
+
+## Troubleshooting
+
+**`ModuleNotFoundError: No module named 'bandits_unconstrained'`**
+
+An old copy. Early versions of this folder imported through a parent package
+and only worked while nested inside a directory of that name, so unzipping it
+anywhere else failed. The folder is now self-contained — replace it with a
+current copy and the error goes away. Nothing else changes.
+
+**`error: unrecognized arguments: --something`**
+
+argparse rejects unknown flags rather than ignoring them. Check `INPUTS.md` or
+run `python3 run_perturbation_experiment.py --help`. Note there is **no `--bandits` flag**: team size is
+a property of each sampled problem, not of a run (see "Fixing the team size" in
+`INPUTS.md`).
+
+**`ModuleNotFoundError: No module named 'pyarrow'`** (or numpy, pandas, scipy)
+
+Install it — see the table above. `python3 verify_setup.py` reports every
+missing dependency at once rather than one per run.
+
+**The sweep seems to hang with no progress bar**
+
+`tqdm` is probably missing; the sweep runs but prints nothing. The startup
+banner says so explicitly. Install `tqdm`, or watch the `_parts/` directory
+fill up.
+
+**A run restarts from scratch instead of resuming**
+
+Resume matches on the exact configuration, which is encoded in the filename. If
+you changed `--rounds`, `--n-settings`, `--seed`, `--switch-limit` or
+`--max-changes`, that is a different run and starts fresh by design.
 
 ---
 

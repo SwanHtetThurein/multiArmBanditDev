@@ -284,7 +284,10 @@ def remove_parts(parts_dir: str) -> None:
 
 # ── the results projection ───────────────────────────────────────────────────
 
-RESULTS_COLUMNS = ["run_id", "setting_id", "n_bandits", "noise_level",
+#: `noise_pct` is carried through deliberately: OUTPUTS.md tells people to
+#: filter on the integer rather than the float, and that advice has to work on
+#: the results file as well as on the trace.
+RESULTS_COLUMNS = ["run_id", "setting_id", "n_bandits", "noise_level", "noise_pct",
                    "round", "performance"]
 PERTURBATION_RESULTS_COLUMNS = RESULTS_COLUMNS + ["phase", "baseline"]
 

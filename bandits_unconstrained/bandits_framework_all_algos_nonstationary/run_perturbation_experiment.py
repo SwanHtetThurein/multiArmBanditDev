@@ -79,21 +79,21 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(os.path.dirname(HERE))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+# Make this folder importable no matter where it was unzipped or what the
+# working directory is (see the note in run_experiment.py).
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 
-PKG = "bandits_unconstrained.bandits_framework_all_algos_nonstationary"
 
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary import parallel  # noqa: E402
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary.parallel import (  # noqa: E402
+import parallel  # noqa: E402
+from parallel import (  # noqa: E402
     Checkpoint, derive_streams, seed_globals, task_id, task_seed,
 )
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary import sampling, tracing  # noqa: E402
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary.algorithms import (  # noqa: E402
+import sampling, tracing  # noqa: E402
+from algorithms import (  # noqa: E402
     ALGORITHMS, get_algorithm, ProblemConfig,
 )
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary.environment import (  # noqa: E402
+from environment import (  # noqa: E402
     NO_LIMIT, DEFAULT_MAX_CHANGES, SWITCH_LIMIT_MODES, SwitchLimiter,
     TeamRewardEnvironment,
 )
@@ -461,6 +461,11 @@ def run_perturbation_experiment(settings: PerturbationSettings,
     doc = sampling.ensure_settings(base_dir, seed=settings.settings_seed,
                                    n_settings=settings.n_settings,
                                    path=settings.settings_path)
+    # An explicit --settings-path supplies its own count, which overrides
+    # --n-settings. Adopt it before any filename or manifest is built, or the
+    # output would claim a setting count the file does not have.
+    settings.n_settings = doc["n_settings"]
+    settings.settings_seed = doc["seed"]
     problem_settings = doc["settings"]
 
     smallest = min(s["n_bandits"] for s in problem_settings)

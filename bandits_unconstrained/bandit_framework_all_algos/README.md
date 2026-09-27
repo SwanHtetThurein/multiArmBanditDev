@@ -75,6 +75,7 @@ bandit_framework/
 ├── OUTPUTS.md               # every output file and column, explained
 ├── verify_setup.py          # self-check: deps, settings, determinism, resume
 ├── sampling.py              # the 500-setting protocol + digest
+├── make_9dim_settings.py    # optional: a settings file with a fixed team size
 ├── tracing.py               # per-round Parquet trace: schema, writer, reader
 ├── parallel.py              # worker pool, tqdm, checkpoint/resume
 ├── experiment.py            # harness: sweep loop, CSV

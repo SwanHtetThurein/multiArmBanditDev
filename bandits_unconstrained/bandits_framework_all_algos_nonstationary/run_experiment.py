@@ -24,25 +24,28 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# Make this folder importable no matter where it was unzipped or what the
+# working directory is. It used to add the GRANDPARENT and import via a
+# `bandits_unconstrained.<folder>` package path, which only worked while the
+# folder sat inside a directory of that exact name -- so the zip that reached
+# anyone else failed with ModuleNotFoundError. The folder is now self-contained.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 
-PKG = "bandits_unconstrained.bandits_framework_all_algos_nonstationary"
 
 # BLAS threads must be capped before numpy is imported anywhere, or each
 # worker spawns its own thread pool and more cores makes the sweep slower.
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary.parallel import (  # noqa: E402
+from parallel import (  # noqa: E402
     limit_blas_threads, resolve_n_cores,
 )
 
 
 def parse_args():
-    from bandits_unconstrained.bandits_framework_all_algos_nonstationary.algorithms import ALGORITHMS
-    from bandits_unconstrained.bandits_framework_all_algos_nonstationary.environment import (
+    from algorithms import ALGORITHMS
+    from environment import (
         DEFAULT_MAX_CHANGES, NO_LIMIT, SWITCH_LIMIT_MODES,
     )
-    from bandits_unconstrained.bandits_framework_all_algos_nonstationary import sampling, tracing
+    import sampling, tracing
 
     p = argparse.ArgumentParser(
         description="Multi-dimensional bandit sweep (500-setting protocol)",
@@ -93,7 +96,7 @@ def main():
 
     limit_blas_threads(resolve_n_cores(args.n_cores))
 
-    from bandits_unconstrained.bandits_framework_all_algos_nonstationary.experiment import (
+    from experiment import (
         ExperimentSettings, run_experiment,
     )
 

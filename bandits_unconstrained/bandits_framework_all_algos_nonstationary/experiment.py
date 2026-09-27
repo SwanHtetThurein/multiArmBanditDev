@@ -40,14 +40,14 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary import parallel, sampling, tracing
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary.parallel import (
+import parallel, sampling, tracing
+from parallel import (
     Checkpoint, derive_streams, seed_globals, task_id, task_seed,
 )
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary.algorithms import (
+from algorithms import (
     get_algorithm, ProblemConfig,
 )
-from bandits_unconstrained.bandits_framework_all_algos_nonstationary.environment import (
+from environment import (
     NO_LIMIT, DEFAULT_MAX_CHANGES, SWITCH_LIMIT_MODES, SwitchLimiter,
     TeamRewardEnvironment,
 )
@@ -252,6 +252,11 @@ def run_experiment(settings: ExperimentSettings, base_dir: Optional[str] = None,
     doc = sampling.ensure_settings(base_dir, seed=settings.settings_seed,
                                    n_settings=settings.n_settings,
                                    path=settings.settings_path)
+    # An explicit --settings-path supplies its own count, which overrides
+    # --n-settings. Adopt it before any filename or manifest is built, or the
+    # output would claim a setting count the file does not have.
+    settings.n_settings = doc["n_settings"]
+    settings.settings_seed = doc["seed"]
     paths = output_paths(settings, base_dir)
     tasks = build_tasks(settings, doc["settings"])
     total = len(tasks)

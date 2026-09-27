@@ -1,0 +1,56 @@
+{
+ "algorithm": "gp_ucb",
+ "algorithm_constants": {
+  "BETA_SCALE": 0.2,
+  "DELTA": 0.1,
+  "ETA_GRID": [
+   0.001,
+   0.01,
+   0.03,
+   0.1,
+   0.3,
+   1.0
+  ],
+  "JITTER": 1e-08,
+  "N_INIT": 10,
+  "N_RESTARTS": 4,
+  "REFIT_EVERY": 10,
+  "RHO_GRID": [
+   0.5,
+   1.0,
+   2.0,
+   3.0,
+   5.0,
+   8.0,
+   12.0,
+   20.0
+  ]
+ },
+ "total_rounds": 100,
+ "noise_levels": [
+  0.0,
+  0.2,
+  0.4,
+  0.6,
+  0.8,
+  1.0
+ ],
+ "n_settings": 500,
+ "master_seed": 42,
+ "settings_seed": 20240501,
+ "settings_digest": "e3dcdeae822630b17cff46dc5c8eeccc85cc36e33b84b2e603e8df681a11c7d1",
+ "settings_file": "bandit_settings_n500_seed20240501.json",
+ "switch_limit": "none",
+ "max_changes": 2.0,
+ "trace_level": "full",
+ "n_runs": 3000,
+ "n_trace_rows": 300000,
+ "n_cores": 19,
+ "wall_seconds": 79.4,
+ "written_at": "2026-09-22T17:27:29.992028+00:00",
+ "host": "Raiyan-PC",
+ "platform": "Windows-10-10.0.26200-SP0",
+ "python": "3.9.21",
+ "numpy": "1.26.3",
+ "pyarrow": "19.0.0"
+}

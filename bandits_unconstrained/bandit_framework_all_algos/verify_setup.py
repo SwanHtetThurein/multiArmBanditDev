@@ -29,11 +29,11 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(os.path.dirname(HERE))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+# Make this folder importable no matter where it was unzipped or what the
+# working directory is (see the note in run_experiment.py).
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 
-PKG = "bandits_unconstrained.bandit_framework_all_algos"
 
 PASS, FAIL = "  PASS", "  FAIL"
 
@@ -80,12 +80,12 @@ def main():
         check("tqdm", False, "pip install tqdm  (progress bars; the sweep still runs without it)")
 
     import importlib
-    sampling = importlib.import_module(PKG + ".sampling")
-    experiment = importlib.import_module(PKG + ".experiment")
-    parallel = importlib.import_module(PKG + ".parallel")
-    tracing = importlib.import_module(PKG + ".tracing")
-    environment = importlib.import_module(PKG + ".environment")
-    algorithms = importlib.import_module(PKG + ".algorithms")
+    sampling = importlib.import_module("sampling")
+    experiment = importlib.import_module("experiment")
+    parallel = importlib.import_module("parallel")
+    tracing = importlib.import_module("tracing")
+    environment = importlib.import_module("environment")
+    algorithms = importlib.import_module("algorithms")
 
     import multiprocessing as mp
     print(f"        {mp.cpu_count()} CPU cores visible")

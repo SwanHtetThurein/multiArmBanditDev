@@ -195,6 +195,11 @@ trace.
 
 Written even at `--trace off`.
 
+> **Results files generated before 22 Sep 2026 have no `noise_pct` column** —
+> the projection omitted it. Filter those on `noise_level` instead (it is
+> float64 and the standard levels compare exactly), or take the column from the
+> trace file, which always had it.
+
 ---
 
 ## The summary file

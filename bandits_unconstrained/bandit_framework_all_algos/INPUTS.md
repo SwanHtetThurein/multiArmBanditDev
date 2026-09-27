@@ -222,8 +222,49 @@ stationary and non-stationary results are directly comparable.
 ### `--settings-path FILE`
 
 Use a specific settings JSON instead of the default for the seed and count.
-Useful for pointing two folders at one shared file, or for re-running an old
-experiment against its original problems.
+Useful for pointing two folders at one shared file, for re-running an old
+experiment against its original problems, or for a problem set with a fixed
+team size (below).
+
+**This overrides `--n-settings` and `--settings-seed`** — the file's own
+contents decide how many settings there are and what seed produced them. Those
+values are adopted from the file, so the output filename and manifest describe
+what actually ran rather than what you typed.
+
+### Fixing the team size
+
+The protocol samples `n_bandits` from {3, 6, 9}, so the default file is a mix —
+roughly 168 settings with 3 roles, 177 with 6 and 155 with 9. There is no
+`--bandits` flag, by design: team size is a property of the problem set, not of
+a run.
+
+If you want every problem to have the same number of roles, generate a settings
+file for it once:
+
+```bash
+python3 make_9dim_settings.py             # every setting gets 9 dimensions
+python3 make_9dim_settings.py --dims 6    # or 6, or 3
+```
+
+then point runs at the file it writes:
+
+```bash
+python3 run_experiment.py --all \
+    --settings-path bandit_settings_n500_seed20240501_dims9.json
+```
+
+That is a **different benchmark** from the standard file — different problems,
+different digest — so do not compare results across the two. Everything else
+about the protocol is unchanged: arm counts still 2–5, all dimensions still
+`ongoing`, one `initial_bias` and `optimal_arm` per setting.
+
+The alternative, which needs no extra file, is to run the standard mixed set and
+filter at analysis time — every output row carries `n_bandits`:
+
+```python
+df = read("..._trace.parquet", columns=["n_bandits", "round", "performance"])
+nine = df[df.n_bandits == 9]
+```
 
 ### What a setting contains
 

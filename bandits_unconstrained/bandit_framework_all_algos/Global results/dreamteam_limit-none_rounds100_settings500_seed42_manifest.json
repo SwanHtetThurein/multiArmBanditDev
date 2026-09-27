@@ -1,0 +1,33 @@
+{
+ "algorithm": "dreamteam",
+ "algorithm_constants": {
+  "PREDICT_FROM_CURRENT": false
+ },
+ "total_rounds": 100,
+ "noise_levels": [
+  0.0,
+  0.2,
+  0.4,
+  0.6,
+  0.8,
+  1.0
+ ],
+ "n_settings": 500,
+ "master_seed": 42,
+ "settings_seed": 20240501,
+ "settings_digest": "e3dcdeae822630b17cff46dc5c8eeccc85cc36e33b84b2e603e8df681a11c7d1",
+ "settings_file": "bandit_settings_n500_seed20240501.json",
+ "switch_limit": "none",
+ "max_changes": 2.0,
+ "trace_level": "full",
+ "n_runs": 3000,
+ "n_trace_rows": 300000,
+ "n_cores": 19,
+ "wall_seconds": 26.6,
+ "written_at": "2026-09-22T17:17:49.418450+00:00",
+ "host": "Raiyan-PC",
+ "platform": "Windows-10-10.0.26200-SP0",
+ "python": "3.9.21",
+ "numpy": "1.26.3",
+ "pyarrow": "19.0.0"
+}

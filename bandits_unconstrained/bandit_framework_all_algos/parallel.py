@@ -51,7 +51,7 @@ import os
 import signal
 from typing import Callable, List, Optional, Tuple
 
-from bandits_unconstrained.bandit_framework_all_algos import tracing
+import tracing
 
 # tqdm is required for the progress bar; fall back to a silent stub so the
 # harness still runs on a machine without it.

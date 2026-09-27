@@ -302,6 +302,7 @@ run_experiment.py                stationary runner, same 26 algorithms
 experiment.py                    problem/test generation, sweep loop, CSV
 environment.py                   hidden optimal arms, noisy reward, switching limit
 sampling.py                      the 500-setting protocol + digest
+make_9dim_settings.py            optional: a settings file with a fixed team size
 tracing.py                       per-round Parquet trace: schema, writer, reader
 parallel.py                      worker pool, tqdm, checkpoint/resume
 verify_setup.py                  self-check: deps, settings, determinism, resume
